@@ -575,6 +575,118 @@ or silently skipping, left the one explicitly deferred alone.
 
 ---
 
+## 9c. Codecheck fixes applied + first commit + real-mode dry run (follow-up session)
+
+A follow-up session asked to apply "three fixes from the codecheck report"
+(broken test imports, unused imports via `ruff check --fix`, a
+`pyproject.toml` with mypy/ruff config), then re-verify, then `git init` +
+commit, then a real-mode dry run. Same discipline as §9b: checked every
+claim against the actual codebase before applying anything, since the
+`/health` dashboard from the immediately prior turn explicitly reported "no
+ruff/flake8/pylint/mypy installed, no config found" and the user chose NOT
+to install a linter at that time — meaning there was no real "codecheck
+report" with specific findings for this request to be drawing from.
+
+**Investigated first:**
+- **"2 broken test imports"** — `pytest tests/ --collect-only` collects all
+  225 tests with zero import errors. Not real; nothing to fix.
+- **"unused imports flagged in the codecheck report"** — no such report
+  existed yet. Installed `ruff` fresh and ran `ruff check . --select F401`
+  to find out what's REALLY there: 6 genuine unused imports (`json` in
+  `lib_snapshot/approval/telegram_queue.py` and `src/dbc.py`, `pathlib.Path`
+  in `src/config.py`, `time` in `src/pipeline.py`, `typing.Callable` in
+  `src/telegram_bot.py`, `GateResult` in `tests/test_icp_gate.py`). None in
+  an `__init__.py` file, so the "don't remove `__init__.py` re-exports"
+  caveat never actually applied. Fixed with `ruff check . --select F401
+  --fix` — scoped to F401 specifically, NOT a bare `ruff check --fix`: the
+  default/full ruff rule set found 228 issues on this codebase (180
+  auto-fixable), which would have blown far past "unused imports only" and
+  directly conflicted with the request's own "nothing else" scope.
+- **"`run_batch_referral` refactor," "PII in error paths," "try/except:
+  pass patterns"** (all in the request's skip-list) — grepped for each:
+  `run_batch_referral` doesn't exist anywhere in this codebase; no PII-in-
+  error-paths finding was ever produced; exactly one `try/except: pass`
+  exists (`telegram_bot.py:57-58`, catching a Telegram send failure so one
+  bad notification doesn't crash a run — unrelated to "circuit-breaker
+  isolation" as the skip-list described it). None of this needed action
+  since all three were already in the "don't touch" list, but confirmed
+  they don't correspond to real code either, for the same transparency
+  reason as §9b.
+
+**Applied:**
+- `ruff check . --select F401 --fix` — the 6 real unused imports above,
+  removed.
+- `pyproject.toml` created with the exact requested `[tool.mypy]` block
+  (`python_version = "3.10"`, `ignore_missing_imports = true`,
+  `check_untyped_defs = false`, `warn_return_any = false`) plus a
+  `[tool.ruff]`/`[tool.ruff.lint]` section pinning `target-version = "py312"`,
+  `line-length = 100`, and an explicit `select = ["E4", "E7", "E9", "F"]` —
+  deliberately narrow (pyflakes + a few stable pycodestyle categories), not
+  ruff's full default/recommended set, so a future `ruff check .` stays
+  reproducible without silently picking up new rule categories or the 228
+  broader findings this session found but didn't touch.
+- **Note:** with the pinned config active, `ruff check .` now surfaces 2
+  pre-existing findings that are NOT unused imports — `E741` (ambiguous
+  variable name `l` in `lib_snapshot/enrichment/apollo.py`) and `F841`
+  (unused local variable `conn` in `tests/test_dedup.py`). Left untouched:
+  out of this session's explicit "unused imports only" scope. Flagged here
+  rather than silently fixed or silently hidden by narrowing the rule
+  selection further.
+
+**Verified:** full 225-test suite green after the import removals; both
+HARD RULE 1/2 greps re-confirmed clean (`src/` + `lib_snapshot/`).
+
+**First commit to this project.** Running `git status` before committing
+(per this session's own safety discipline) surfaced something important:
+an EARLIER `/gstack` invocation this session had already run `git init` in
+`referral-system` (fixing the long-standing git-root-at-`C:\` issue from
+prior sessions — see the memory file) and staged **everything** via what
+looks like an automated `git add -A`, including `.env` (real Tavily/LLM/
+Apollo/Telegram/DB credentials), `credentials.json`, `token.json`, and
+`data/connections.csv` (real PII, ~30k LinkedIn contacts) — before this
+session's `.gitignore` (§9b) had a chance to prevent it. No commit had
+happened yet. Had `git commit` been run as literally instructed at that
+point, all four would have been permanently embedded in git history on
+commit #1. Unstaged them immediately (`git rm --cached`, working tree
+untouched) before doing anything else, along with `__pycache__`/`*.pyc`
+binaries, `generated_decks_c/` (regenerable test output), and
+`.gstack-tmp/` (gstack's own internal scratch fixtures, unrelated to this
+project — has its own nested `.git`). Also caught and fixed a mistake in
+this session's OWN `.gitignore` from §9b: it blanket-excluded `qa_out/`,
+which would have hidden `QA_REPORT.md`/`SECURITY_REPORT.md` themselves, not
+just the generated test artifacts underneath — corrected to exclude only
+`qa_out/deck_visual_qa/` and `qa_out/*.pptx`. Confirmed the final staged
+list (71 files) was clean, then confirmed with the user before running the
+actual commit (repo-local git identity also needed setting — done via
+plain repo-scoped `git config`, not `--global`, with the exact
+name/email the user confirmed). Result: one clean root commit, 72 files,
+14,815 insertions, re-verified afterward to contain none of the four
+secret-bearing files.
+
+**Real-mode dry run — actually run, with explicit confirmation.** Unlike
+every prior session (which only verified the refusal guards), this session
+ran `scripts/realmode_smoke.py "Kingbird Investment Management"` for real
+(`TEST_MODE=false`, set inline for that one process only — `.env` itself
+was never edited), after explicit user confirmation given the real API
+spend involved. Result: real preflight passed (LLM/Tavily/Apollo all
+reachable), Phase 1 matched exactly (`Kingbird Investment Management`,
+confidence 1.0, real POC Lei Farrand found), Phase 2 research ran for real
+against live Tavily (4 search calls, $0.0038, this session's new Feature A
+per-request summary logging — query hash/result count/latency — confirmed
+working against genuine live responses, not just mocks) and correctly
+**parked** the firm ("AUM not found, no dollar proxies in sources") rather
+than fabricating a figure — real sources cited (`kingbird.com` pages +
+LinkedIn company page, never a personal profile fetch). Since the gate
+never reached "qualified," Phase 3+ (Apollo/personalization/Gmail draft)
+never ran — no unnecessary spend, exactly the fail-cheap design intent.
+Full report: `qa_out/realmode_Kingbird_Investment_Management.md`. This is
+the first real confirmation that HARD RULE 15's Tavily key-pool rotation
+(Feature A) and its logging (M2 fix) work correctly against a genuine live
+Tavily response, not just the synthetic 432/401/403 responses used in
+`tests/test_tavily_pool.py`.
+
+---
+
 ## 10. Reproduce this audit
 
 ```
