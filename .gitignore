@@ -1,0 +1,28 @@
+# Secrets — never commit these (see qa_out/SECURITY_REPORT.md Finding 1).
+.env
+.env.*
+!.env.example
+token.json
+credentials.json
+
+# Real PII — data/connections.csv is Manpreet's real LinkedIn export
+# (~30,000 contacts: names, titles, seed emails). Never commit it.
+data/connections.csv
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated/local-only artifacts. qa_out/*.md reports (QA_REPORT.md,
+# SECURITY_REPORT.md) ARE tracked — only the generated test-run output
+# underneath is excluded. Corrected from an earlier blanket `qa_out/`
+# exclusion that would have hidden the reports themselves.
+qa_out/deck_visual_qa/
+qa_out/*.pptx
+generated_decks_c/
+
+# gstack's own internal scratch/test fixtures — not part of this project
+# (has its own nested .git; found staged by an earlier `git add -A` this
+# session, unrelated to referral-system).
+.gstack-tmp/

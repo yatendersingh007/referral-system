@@ -1,0 +1,32 @@
+# X Analyst Outreach Automation - Python dependencies
+# Pin major versions; verified against Python 3.12.
+
+python-dotenv==1.0.1
+
+# Postgres (queue + state + log). psycopg 3 with binary wheels + pool.
+psycopg[binary]==3.2.3
+psycopg-pool==3.2.4
+
+# LLM: OpenAI-compatible client. Provider switch = LLM_BASE_URL env only
+# (DeepSeek direct <-> Groq <-> Azure AI Foundry). No code edits.
+# openai>=2.x is compatible with httpx>=0.28 (required by exa-py).
+openai==2.46.0
+httpx==0.28.1
+
+# HTTP for Tavily, Apollo, Telegram Bot API (polling mode).
+requests==2.32.3
+
+# Exa: semantic search provider for competitor discovery (find-similar firms).
+exa-py==2.16.0
+
+# Gmail drafts (scope: gmail.compose only). Installed-app OAuth flow.
+google-api-python-client==2.149.0
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+
+# Workflow C: fuzzy scoring for the Phase 1 firm matcher (token_sort_ratio).
+rapidfuzz==3.10.1
+
+# Workflow C: .xlsx parsing for /referral batch file-upload target lists.
+openpyxl==3.1.5

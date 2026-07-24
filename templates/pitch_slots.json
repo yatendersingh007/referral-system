@@ -1,0 +1,171 @@
+{
+  "master_pptx": "Pitch_Master.pptx",
+  "slides": {
+    "1": [
+      {
+        "key": "cover_title",
+        "type": "name_swap",
+        "locator": "Built for Kingbird.",
+        "template": "Built for {{firm_short}}."
+      },
+      {
+        "key": "firm_name_display",
+        "type": "full_replace",
+        "locator": "Kingbird Investments"
+      }
+    ],
+    "2": [
+      {
+        "key": "agenda_subtitle",
+        "type": "name_swap",
+        "locator": "A focused introduction to how X Analyst can extend Kingbird&apos;s operating team.",
+        "template": "A focused introduction to how X Analyst can extend {{firm_short}}&apos;s operating team."
+      },
+      {
+        "key": "agenda_section01_label",
+        "type": "full_replace",
+        "locator": "Kingbird"
+      },
+      {
+        "key": "agenda_fit_line",
+        "type": "name_swap",
+        "locator": "Why this maps to Kingbird&apos;s operating stack",
+        "template": "Why this maps to {{firm_short}}&apos;s operating stack"
+      }
+    ],
+    "3": [
+      {
+        "key": "profile_title",
+        "type": "name_swap",
+        "locator": "What we know about Kingbird",
+        "template": "What we know about {{firm_short}}"
+      },
+      {
+        "key": "firm_oneliner",
+        "type": "full_replace",
+        "locator": "Kingbird Investments is a vertically integrated real estate investment manager specializing in workforce and market-rate multifamily housing across US secondary markets."
+      },
+      {
+        "key": "profile_bullet_1",
+        "type": "full_replace",
+        "locator": "Vertically integrated real estate investment manager with over a century of family office heritage."
+      },
+      {
+        "key": "profile_bullet_2",
+        "type": "full_replace",
+        "locator": "Manages $4.4 billion in gross asset value as of December 31, 2025."
+      },
+      {
+        "key": "profile_bullet_3",
+        "type": "full_replace",
+        "locator": "Specializes in multifamily workforce housing through ventures with local operating partners."
+      },
+      {
+        "key": "profile_bullet_4",
+        "type": "full_replace",
+        "locator": "Investment approach prioritizes income, capital preservation, and downside risk mitigation."
+      },
+      {
+        "key": "profile_bullet_5",
+        "type": "full_replace",
+        "locator": "Appointed Director of Capital Markets in 2019 to expand investment services."
+      },
+      {
+        "key": "profile_bullet_6",
+        "type": "full_replace",
+        "locator": "Acts as fiduciary for the Ferré Rangel family office and third-party investors."
+      },
+      {
+        "key": "aum_value",
+        "type": "full_replace",
+        "locator": "$4.4B"
+      },
+      {
+        "key": "aum_label",
+        "type": "full_replace",
+        "locator": "Gross Asset Value"
+      },
+      {
+        "key": "aum_asof",
+        "type": "full_replace",
+        "locator": "as of Dec 31, 2025"
+      },
+      {
+        "key": "founded_year",
+        "type": "full_replace",
+        "locator": "2008"
+      },
+      {
+        "key": "capital_stack",
+        "type": "full_replace",
+        "locator": "LP, GP, Co-GP, Preferred Equity"
+      }
+    ],
+    "12": [
+      {
+        "key": "fit_title",
+        "type": "name_swap",
+        "locator": "Where this fits Kingbird specifically",
+        "template": "Where this fits {{firm_short}} specifically"
+      },
+      {
+        "key": "fit_paragraph_1_heading",
+        "type": "fixed",
+        "locator": "Scalable Property Accounting"
+      },
+      {
+        "key": "fit_paragraph_1",
+        "type": "full_replace",
+        "locator": "With $4.4B in gross assets and a focus on multifamily properties, Kingbird requires robust property accounting to handle complex rent rolls, operating expenses, and capital improvements across a geographically dispersed portfolio."
+      },
+      {
+        "key": "fit_paragraph_2_heading",
+        "type": "fixed",
+        "locator": "Complex Fund Structures"
+      },
+      {
+        "key": "fit_paragraph_2",
+        "type": "full_replace",
+        "locator": "Kingbird&apos;s use of LP, GP, Co-GP, and preferred equity structures demands precise fund accounting to ensure accurate allocations, waterfall calculations, and investor reporting across multiple entities."
+      },
+      {
+        "key": "fit_paragraph_3_heading",
+        "type": "fixed",
+        "locator": "Tailored Investor Reporting"
+      },
+      {
+        "key": "fit_paragraph_3",
+        "type": "full_replace",
+        "locator": "Serving family offices and institutional investors, Kingbird needs customized investor reports that align with each investor&apos;s preferences while maintaining transparency and compliance."
+      },
+      {
+        "key": "fit_paragraph_4_heading",
+        "type": "fixed",
+        "locator": "Underwriting &amp; Acquisitions Support"
+      },
+      {
+        "key": "fit_paragraph_4",
+        "type": "full_replace",
+        "locator": "Kingbird&apos;s research-driven acquisition strategy benefits from X Analyst&apos;s underwriting support, providing detailed financial modeling, due diligence, and scenario analysis to evaluate risk-adjusted returns."
+      },
+      {
+        "key": "fit_paragraph_5_heading",
+        "type": "fixed",
+        "locator": "Capital Markets Expertise"
+      },
+      {
+        "key": "fit_paragraph_5",
+        "type": "full_replace",
+        "locator": "With a dedicated Director of Capital Markets, Kingbird can leverage X Analyst&apos;s capital markets support for debt placement, refinancing, and structuring to optimize the capital stack."
+      }
+    ],
+    "14": [
+      {
+        "key": "closing_line",
+        "type": "name_swap",
+        "locator": "Let&apos;s build what Kingbird&apos;s next chapter of operational leverage looks like.",
+        "template": "Let&apos;s build what {{firm_short}}&apos;s next chapter of operational leverage looks like."
+      }
+    ]
+  }
+}

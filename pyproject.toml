@@ -1,0 +1,20 @@
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_return_any = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Pinned explicitly (not left to ruff's shipped default, which can change
+# between ruff releases) so a future `ruff check .` reproduces the same
+# result: pyflakes (F, the unused-import/undefined-name category used to
+# find and fix the 6 unused imports this session) plus a few stable
+# pycodestyle error categories. Not the full default/recommended set —
+# deliberately narrow, since broadening scope beyond "unused imports" wasn't
+# asked for and this session found 228 findings under ruff's full default
+# rules, most of them out of scope for now.
+select = ["E4", "E7", "E9", "F"]
