@@ -47,6 +47,11 @@ It is a fact that proves homework.
 Rules:
 - Must reference something specific to THIS firm. No generic RE industry talk.
 - Must be verifiable from research sources. No invented details.
+- Every number (dollar figure, unit count, state count) must be copied
+  VERBATIM from the research object. Never round, re-derive, or paraphrase
+  a figure that already exists there — if research says 17 states and
+  $4.4B, write 17 states and $4.4B, not "several states" and not a nearby
+  number that sounds about right.
 - No superlatives ("impressive portfolio", "remarkable growth"). State facts.
 - No "I noticed that..." or "I was impressed by..." or "I came across..."
   State the fact the way you would say it on a phone call, as context for
@@ -92,6 +97,22 @@ Rules:
 - No buzzwords. See banned words list below.
 - Write it like Harp would say it across a table. If it sounds like a
   consulting deck, rewrite it.
+- Do NOT repeat a number or fact Block 2 already used (same unit count, same
+  AUM/GAV figure, same state count). Block 4 must add something NEW to the
+  picture, not restate Block 2 in different words. If the only pain point you
+  can think of is "the same fact Block 2 already used, but bigger stakes,"
+  find a different angle: entity count, reporting cadence, LP mix, systems in
+  use — anything that isn't the number Block 2 already spent.
+- Name the CONCRETE cost, not an abstract risk. "Risks breaking investor
+  reporting" or "risks disrupting X" is consultant-speak, not Harp's voice —
+  it describes a category of bad outcome instead of the specific person
+  losing specific hours to a specific problem. Say what actually happens:
+  whose night it costs, what the workaround looks like, what breaks first.
+- The example numbers below ("40+ entities," "15,000 units," "six states")
+  are STYLE samples, not facts about this firm. Never reuse one of them
+  unless the research object independently confirms that exact number for
+  THIS firm — copying an example's number is exactly the kind of invented
+  figure the number-fidelity check below is built to reject.
 
 Good example:
 "With LP, GP, and co-GP structures across 40+ entities, your controller is
@@ -108,6 +129,12 @@ Bad example:
 "Many firms in the real estate space face challenges with their accounting
 operations, and we believe there is an opportunity to optimize your processes
 and enhance efficiency across your portfolio."
+
+Another bad example (abstract risk instead of a concrete cost, and repeats
+Block 2's unit count instead of adding a new fact):
+"Managing roughly 21,000 units for family offices and third-party LPs means
+onboarding a new operations partner risks breaking investor reporting and
+performance verification."
 
 ### BLOCK 5 - X Analyst value prop (FIXED, verbatim)
 
@@ -179,6 +206,11 @@ P.S. Manpreet can vouch for the work.
    - No questions in Block 2 or Block 4. Block 6 CTA is the only question.
    - Every fact must come from the research object. If you cannot verify it,
      do not write it.
+   - Every number must be copied verbatim from the research object, not
+     re-derived or rounded. A generated block with a number that does not
+     match the research object is treated as a failure and replaced with the
+     generic fallback — see NUMBER FIDELITY below.
+   - Block 4 must not restate a number Block 2 already used.
 
 4. REFERRAL CLAIM DISCIPLINE (HARD RULE 8): Block 2 and Block 4 may reference
    the Manpreet connection as context ("part of Manpreet's network" is fine,
@@ -188,6 +220,15 @@ P.S. Manpreet can vouch for the work.
 
 5. SOURCE DISCIPLINE: Every firm-specific claim in Block 2 must trace to a
    source URL in the research object.
+
+5a. NUMBER FIDELITY (mechanically enforced, not just a prompt instruction):
+   every dollar figure or count in Block 2 and Block 4 is checked against the
+   research/personalization object after generation. A number that does not
+   appear there is treated as ungrounded and the whole block is replaced
+   with the generic fallback (see FALLBACK below) — the same block is never
+   partially edited to fix one bad number, since a hand-patched sentence
+   reads as obviously mutilated. Likewise, if Block 4 repeats a number
+   Block 2 already used, both blocks fall back.
 
 6. FALLBACK (thin_personalization): If research is too thin to write a
    credible firm-specific Block 2, use the firm_oneliner from Phase 2 as a

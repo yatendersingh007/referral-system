@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import Callable, Optional
 
-from . import config, testmode
+from . import config, fact_check, testmode
 
 Progress = Callable[[str], None]
 
@@ -145,6 +145,24 @@ def find_violations(text: str) -> list[str]:
     return v
 
 
+# QA finding (real-mode Kingbird run): research had 17 states / $4.3B; Block
+# 2 said "12 states / $4.3B" -- Phase 5a's LLM call is given the research
+# object as context but nothing mechanically stopped it from restating a
+# figure with drift (or inventing one). Every dollar figure or count Block
+# 2/4 cites must trace to the research+personalization data it was
+# generated from.
+def find_grounding_violations(text: str, corpus_text: str) -> list[str]:
+    return [f"ungrounded_claim:{c}" for c in sorted(fact_check.unverifiable_claims(text, corpus_text))]
+
+
+# QA finding (real-mode Kingbird run): Block 2 and Block 4 both said "roughly
+# 21,000 units" -- Block 4 restated a fact Block 2 already used instead of
+# adding a new one, reading as padded rather than tightly written.
+def find_redundant_claims(block2: str, block4: str) -> list[str]:
+    shared = fact_check.extract_numeric_claims(block2) & fact_check.extract_numeric_claims(block4)
+    return [f"redundant_claim:{c}" for c in sorted(shared)]
+
+
 # ---------------------------------------------------------------------------
 # Block 2 / Block 4 generation
 # ---------------------------------------------------------------------------
@@ -166,7 +184,8 @@ def _fallback_blocks(research: dict) -> tuple[str, str]:
     return block2, _THIN_FALLBACK_BLOCK_4
 
 
-def _generate_blocks(firm_name: str, research: dict, personalization: dict) -> tuple[str, str, bool]:
+def _generate_blocks(firm_name: str, research: dict, personalization: dict,
+                     progress: Progress = _noop) -> tuple[str, str, bool]:
     """Returns (block_2, block_4, used_thin_fallback)."""
     thin = bool(personalization.get("thin_personalization"))
 
@@ -190,7 +209,13 @@ def _generate_blocks(firm_name: str, research: dict, personalization: dict) -> t
     block2 = (parsed.get("block_2") or "").strip()
     block4 = (parsed.get("block_4") or "").strip()
 
-    if find_violations(block2) or find_violations(block4):
+    corpus_text = fact_check.grounding_corpus(research, personalization)
+    violations = (find_violations(block2) + find_violations(block4)
+                 + find_grounding_violations(block2, corpus_text)
+                 + find_grounding_violations(block4, corpus_text)
+                 + find_redundant_claims(block2, block4))
+    if violations:
+        progress(f"{firm_name}: Block 2/4 fell back to generic text ({', '.join(violations)}).")
         return (*_fallback_blocks(research), True)
     return block2, block4, False
 
@@ -268,7 +293,7 @@ def draft_email(firm_name: str, poc_first_name: str, poc_email: str,
     block6 = fixed[6]
     block7 = fixed[7]
 
-    block2, block4, used_thin = _generate_blocks(firm_name, research, personalization)
+    block2, block4, used_thin = _generate_blocks(firm_name, research, personalization, progress)
 
     fixed_word_count = sum(len(b.split()) for b in (block1, block3, block5, block6, block7))
     block2, block4 = _trim_to_budget(block2, block4, fixed_word_count, block4_is_fixed=used_thin)

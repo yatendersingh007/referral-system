@@ -240,7 +240,7 @@ def process_referral_firm(firm_id: int, breaker: Optional[CircuitBreaker] = None
     ppt_attached = False
     if config.PITCH_MASTER_PPTX.exists():
         deck_content = deck_filler.get_deck_content(firm_name, research, pers)
-        deck_result = deck_filler.build_and_convert(firm_name, research, deck_content, progress)
+        deck_result = deck_filler.build_and_convert(firm_name, research, deck_content, progress, personalization=pers)
         pdf_path = deck_result["pdf_path"]
         ppt_attached = pdf_path is not None
     else:

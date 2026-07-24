@@ -51,7 +51,16 @@ def client_for(model: Optional[str] = None) -> OpenAI:
         # the SDK's own retries so a stalled endpoint can't stack ~3x90s per call
         # (chat() already runs its own retry loop on top).
         kwargs: dict[str, Any] = {"base_url": ep["base_url"], "api_key": ep["api_key"],
-                                  "timeout": 90, "max_retries": 1}
+                                  "timeout": 90, "max_retries": 1,
+                                  # Azure AI Foundry (services.ai.azure.com/models) checks
+                                  # authentication via an "api-key" HEADER, not the
+                                  # "Authorization: Bearer <key>" header the OpenAI SDK sends
+                                  # from api_key= alone -- Bearer-only auth 401s against
+                                  # Foundry even with a correct, working key (confirmed via a
+                                  # direct httpx POST to the same endpoint/key returning 200).
+                                  # api_key= is kept so the SDK's own client-side validation
+                                  # still passes; this header is what Foundry actually checks.
+                                  "default_headers": {"api-key": ep["api_key"]}}
         if ep.get("api_version"):
             kwargs["default_query"] = {"api-version": ep["api_version"]}
         _clients[key] = OpenAI(**kwargs)

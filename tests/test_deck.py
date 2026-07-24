@@ -165,7 +165,8 @@ def test_full_replace_slots_take_research_values(tmp_path):
     firm = "Northgate Realty Partners"
     research = {"firm_oneliner": "A vertically integrated industrial REIT.", "aum_display": "$750M",
                "aum_tag": "AUM_CONFIRMED", "aum_asof": "as of Jan 1, 2026", "founded_year": "2011",
-               "capital_stack": "LP, GP, Preferred Equity"}
+               "capital_stack": "LP, GP, Preferred Equity",
+               "geography": "Owns 40 industrial properties across the Midwest."}
     deck_content = {"profile_bullets": ["Owns 40 industrial properties.", "Focused on the Midwest."],
                     "fit_paragraphs": ["Para A.", "Para B.", "Para C.", "Para D.", "Para E."]}
     fill_data = deck_filler.build_fill_data(firm, research, deck_content)
@@ -279,6 +280,197 @@ def test_aum_unverified_also_blanks_stat_card():
     research = {"firm_oneliner": "x", "aum_display": "", "aum_tag": "AUM_UNVERIFIED"}
     fill_data = deck_filler.build_fill_data("Unverified Co", research, {"profile_bullets": [], "fit_paragraphs": []})
     assert fill_data["aum_value"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Fix A (real-mode Kingbird run): a GAV proxy is a CONFIRMED, publicly
+# disclosed figure -- the gate's own leverage-haircut conversion to an
+# estimated equity number is an internal analytical construct, never written
+# back into aum_display. The prior guard's `_AUM_LABEL_RE.search("AUM")`
+# condition searched a literal constant string and was always true, so it
+# blanked the GAV stat card too, even though it's real and must show.
+# ---------------------------------------------------------------------------
+def test_gav_proxy_estimated_shows_the_confirmed_stat_card():
+    research = {"firm_oneliner": "x", "aum_display": "$4.4B", "aum_tag": "AUM_ESTIMATED",
+               "proxy_type": "gav", "aum_asof": "as of Dec 31, 2025"}
+    fill_data = deck_filler.build_fill_data("GAV Disclosed Co", research,
+                                            {"profile_bullets": [], "fit_paragraphs": []})
+    assert fill_data["aum_value"] == "$4.4B"
+    assert fill_data["aum_label"] == "Gross Asset Value"
+    assert fill_data["aum_asof"] == "as of Dec 31, 2025"
+
+
+def test_gav_proxy_estimated_does_not_strip_money_mentions_from_bullets():
+    research = {"firm_oneliner": "x", "aum_display": "$4.4B", "aum_tag": "AUM_ESTIMATED", "proxy_type": "gav"}
+    deck_content = {"profile_bullets": ["Manages $4.4 billion in gross asset value."], "fit_paragraphs": []}
+    fill_data = deck_filler.build_fill_data("GAV Bullet Co", research, deck_content)
+    assert fill_data["profile_bullet_1"] == "Manages $4.4 billion in gross asset value."
+
+
+def test_gav_proxy_estimated_stat_card_renders_end_to_end_in_xml(tmp_path):
+    """Uses a GAV figure deliberately different from the master's own literal
+    "$4.4B" locator text, so the assertion proves the value came from
+    research, not a no-op match against the unfilled master."""
+    research = {"firm_oneliner": "A GAV-disclosing test firm.", "aum_display": "$3.4B",
+               "aum_tag": "AUM_ESTIMATED", "proxy_type": "gav", "aum_asof": "as of Dec 31, 2025",
+               "founded_year": "2012", "capital_stack": "LP, GP, Preferred Equity"}
+    deck_content = {"profile_bullets": ["A fact."], "fit_paragraphs": ["p1", "p2", "p3", "p4", "p5"]}
+    fill_data = deck_filler.build_fill_data("GAV Render Co", research, deck_content)
+    out = tmp_path / "out.pptx"
+    deck_filler.fill_deck("GAV Render Co", fill_data, out)
+    slide3 = _slide_texts(out, 3)
+    assert "$3.4B" in slide3
+    assert "Gross Asset Value" in slide3
+
+
+def test_non_gav_estimated_proxy_still_blanks_the_stat_card():
+    """A floor/non_floor/units proxy has no directly-disclosed figure behind
+    it -- only proxy_type == 'gav' is exempt from the blanking guard."""
+    research = {"firm_oneliner": "x", "aum_display": "$1.7B", "aum_tag": "AUM_ESTIMATED", "proxy_type": "floor"}
+    fill_data = deck_filler.build_fill_data("Floor Proxy Co", research, {"profile_bullets": [], "fit_paragraphs": []})
+    assert fill_data["aum_value"] == ""
+    assert fill_data["aum_label"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Fix C (real-mode Kingbird run): capital_stack rendered as the degenerate,
+# self-referential "across the capital stack" instead of the real disclosed
+# tranche list. No real capital-stack value would ever contain the phrase
+# "capital stack" describing itself.
+# ---------------------------------------------------------------------------
+def test_degenerate_capital_stack_value_is_blanked():
+    research = {"firm_oneliner": "x", "aum_display": "$1.1B", "aum_tag": "AUM_CONFIRMED",
+               "capital_stack": "across the capital stack"}
+    fill_data = deck_filler.build_fill_data("Degenerate Stack Co", research, {"profile_bullets": [], "fit_paragraphs": []})
+    assert fill_data["capital_stack"] == ""
+
+
+def test_real_capital_stack_value_passes_through():
+    research = {"firm_oneliner": "x", "aum_display": "$1.1B", "aum_tag": "AUM_CONFIRMED",
+               "capital_stack": "LP, GP, Co-GP, Preferred Equity"}
+    fill_data = deck_filler.build_fill_data("Real Stack Co", research, {"profile_bullets": [], "fit_paragraphs": []})
+    assert fill_data["capital_stack"] == "LP, GP, Co-GP, Preferred Equity"
+
+
+# ---------------------------------------------------------------------------
+# Fix B (real-mode Kingbird run): a bullet/paragraph whose number does not
+# trace to the research/personalization object is a data-integrity failure
+# (extraction drift or an outright hallucination), not just an estimated-AUM
+# leak -- dropped whole, same "never partially edit" philosophy.
+# ---------------------------------------------------------------------------
+def test_ungrounded_numeric_claim_in_bullet_is_dropped():
+    research = {"firm_oneliner": "x", "aum_display": "$1.1B", "aum_tag": "AUM_CONFIRMED",
+               "geography": "US (17 states) and Puerto Rico"}
+    deck_content = {
+        "profile_bullets": [
+            "Operates across 12 states and Puerto Rico.",  # drifted from research's 17
+            "A fiduciary for family offices and third-party LPs.",  # no numbers, clean
+        ],
+        "fit_paragraphs": [],
+    }
+    fill_data = deck_filler.build_fill_data("Drifted Numbers Co", research, deck_content)
+    assert fill_data["profile_bullet_1"] == "A fiduciary for family offices and third-party LPs."
+    assert "12 states" not in fill_data["profile_bullet_2"]
+
+
+def test_grounded_numeric_claim_matching_research_survives():
+    research = {"firm_oneliner": "x", "aum_display": "$1.1B", "aum_tag": "AUM_CONFIRMED",
+               "geography": "US (17 states) and Puerto Rico"}
+    deck_content = {"profile_bullets": ["Operates across 17 states and Puerto Rico."], "fit_paragraphs": []}
+    fill_data = deck_filler.build_fill_data("Matching Numbers Co", research, deck_content)
+    assert fill_data["profile_bullet_1"] == "Operates across 17 states and Puerto Rico."
+
+
+# ---------------------------------------------------------------------------
+# General placeholder-leak safety net (QA ask, follow-up review): an empty
+# fill value must actively blank a slot, never leave the master's own sample
+# text showing through on a client-facing deck. fill_deck() always performs
+# an active replace for every non-fixed slot (even an empty one), so this
+# should be structurally impossible -- these tests verify it directly rather
+# than assuming the replace logic is airtight.
+# ---------------------------------------------------------------------------
+def test_empty_fill_value_leaves_no_master_placeholder_end_to_end(tmp_path):
+    research = {"firm_oneliner": "x", "aum_display": "", "aum_tag": "AUM_UNVERIFIED"}
+    deck_content = {"profile_bullets": [], "fit_paragraphs": []}
+    fill_data = deck_filler.build_fill_data("Blank Slots Co", research, deck_content)
+    assert fill_data["aum_value"] == ""
+    assert fill_data["aum_label"] == ""
+    assert fill_data["founded_year"] == ""
+    assert fill_data["capital_stack"] == ""
+
+    out = tmp_path / "out.pptx"
+    deck_filler.fill_deck("Blank Slots Co", fill_data, out)
+    slide3 = " ".join(_slide_texts(out, 3))
+    for master_placeholder in ("$4.4B", "Gross Asset Value", "as of Dec 31, 2025", "2008",
+                               "LP, GP, Co-GP, Preferred Equity"):
+        assert master_placeholder not in slide3, f"master placeholder {master_placeholder!r} leaked into output"
+    assert deck_filler.find_placeholder_leaks("Blank Slots Co", fill_data, out) == []
+
+
+def test_find_placeholder_leaks_detects_a_reintroduced_master_value(tmp_path):
+    """Direct test of the general safety net itself: if a slot's master
+    placeholder somehow survives into output (simulated here by injecting it
+    back in after a clean fill), find_placeholder_leaks must catch it."""
+    firm = "Northgate Realty Partners"
+    research = {"firm_oneliner": "A vertically integrated industrial REIT.", "aum_display": "$750M",
+               "aum_tag": "AUM_CONFIRMED", "aum_asof": "as of Jan 1, 2026", "founded_year": "2011",
+               "capital_stack": "LP, GP, Preferred Equity"}
+    deck_content = {"profile_bullets": [], "fit_paragraphs": []}
+    fill_data = deck_filler.build_fill_data(firm, research, deck_content)
+    out = tmp_path / "out.pptx"
+    deck_filler.fill_deck(firm, fill_data, out)
+    assert deck_filler.find_placeholder_leaks(firm, fill_data, out) == []
+
+    _rewrite_zip_entry(out, "ppt/slides/slide3.xml", "<a:t>2011</a:t>",
+                       "<a:t>2011</a:t><a:t>2008</a:t>", expected_count=1)
+    leaks = deck_filler.find_placeholder_leaks(firm, fill_data, out)
+    assert any("founded_year" in p and "2008" in p for p in leaks), leaks
+
+
+def test_fill_deck_raises_when_a_placeholder_would_leak(tmp_path, monkeypatch):
+    """fill_deck() itself must refuse to ship output with a leaked
+    placeholder, not just report it via a separate function a caller might
+    forget to call. find_placeholder_leaks' own detection logic is proven
+    separately above; this test proves fill_deck is actually WIRED to it and
+    treats a non-empty result as a hard failure."""
+    firm = "Leak Guard Co"
+    research = {"firm_oneliner": "x", "aum_display": "$300M", "aum_tag": "AUM_CONFIRMED"}
+    fill_data = deck_filler.build_fill_data(firm, research, {"profile_bullets": [], "fit_paragraphs": []})
+
+    monkeypatch.setattr(deck_filler, "find_placeholder_leaks",
+                        lambda *a, **kw: ["simulated leak for this test"])
+    with pytest.raises(deck_filler.DeckFillError, match="placeholder leaked"):
+        deck_filler.fill_deck(firm, fill_data, tmp_path / "out.pptx")
+
+
+# ---------------------------------------------------------------------------
+# Escaping regression guard (found during this fix's own review): sharing
+# slot-resolution logic between fill_deck() and find_placeholder_leaks()
+# risked double-escaping a name_swap template's already-XML-escaped
+# apostrophe entity (&apos; -> &amp;apos;, which renders as the literal text
+# "&apos;" on the slide instead of an apostrophe).
+# ---------------------------------------------------------------------------
+def test_name_swap_slot_preserves_xml_entity_escaping_no_double_escape(tmp_path):
+    firm = "Riverside Bay Partners"
+    research = {"firm_oneliner": "x", "aum_display": "$500M", "aum_tag": "AUM_CONFIRMED"}
+    fill_data = deck_filler.build_fill_data(firm, research, {"profile_bullets": [], "fit_paragraphs": []})
+    out = tmp_path / "out.pptx"
+    deck_filler.fill_deck(firm, fill_data, out)
+    combined = " ".join(_slide_texts(out, 2))
+    assert "Riverside Bay&apos;s" in combined, combined
+    assert "&amp;apos;" not in combined, f"apostrophe entity was double-escaped: {combined!r}"
+
+
+def test_grounded_numeric_claim_from_personalization_survives():
+    """The grounding corpus includes personalization too -- a fact Phase 4
+    surfaced (e.g. a unit count in a hook) that never made it into a Phase 2
+    research field must still count as grounded, not get dropped as an
+    invented number."""
+    research = {"firm_oneliner": "x", "aum_display": "$1.1B", "aum_tag": "AUM_CONFIRMED"}
+    personalization = {"hook_1": "Since 2008 the firm has invested in over 21,000 multifamily units."}
+    deck_content = {"profile_bullets": ["Manages a portfolio of 21,000 multifamily units."], "fit_paragraphs": []}
+    fill_data = deck_filler.build_fill_data("Personalization Grounded Co", research, deck_content, personalization)
+    assert fill_data["profile_bullet_1"] == "Manages a portfolio of 21,000 multifamily units."
 
 
 # ---------------------------------------------------------------------------

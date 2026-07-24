@@ -132,11 +132,15 @@ def main() -> int:
         f"- Result: `{gate.icp_result}`",
         f"- Reason: {gate.icp_reason}",
         f"- AUM tag: `{gate.aum_tag}`",
+        f"- Proxy type: `{research.get('proxy_type')}`",
         f"- AUM value (raw): `{research.get('aum_value_usd')}`",
         f"- AUM display: {research.get('aum_display')}",
         f"- Confidence: {gate.confidence}",
         f"- Search calls: {gate.search_calls} | Tokens: {gate.tokens_used} | Cost: ${gate.research_cost_usd:.4f}",
         f"- Firm oneliner: {research.get('firm_oneliner')}",
+        f"- Geography: {research.get('geography')}",
+        f"- Capital stack: {research.get('capital_stack')}",
+        f"- Founded year: {research.get('founded_year')}",
         "- Sources:",
     ] + [f"  - {u}" for u in (research.get("sources") or [])] + [""]
 
@@ -199,7 +203,7 @@ def main() -> int:
     if config.PITCH_MASTER_PPTX.exists():
         print("Filling the pitch deck (LLM extraction for bullets/fit paragraphs) and converting to PDF...")
         deck_content = deck_filler.get_deck_content(matched_company, research, pers)
-        deck_result = deck_filler.build_and_convert(matched_company, research, deck_content, progress=print)
+        deck_result = deck_filler.build_and_convert(matched_company, research, deck_content, progress=print, personalization=pers)
         pdf_path = deck_result["pdf_path"]
         report_lines += [
             "## Phase 5b — Pitch deck",

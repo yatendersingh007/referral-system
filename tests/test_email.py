@@ -23,6 +23,8 @@ from src.email_drafter import (
     _generate_blocks,
     _trim_to_budget,
     draft_email,
+    find_grounding_violations,
+    find_redundant_claims,
     find_violations,
     reload_template,
 )
@@ -174,6 +176,106 @@ def test_real_mode_llm_output_with_violation_falls_back_instead_of_shipping(monk
     assert used_fallback is True
     assert "Manpreet" not in block2
     assert block2 == research["firm_oneliner"]
+    assert block4 == _THIN_FALLBACK_BLOCK_4
+
+
+# ---------------------------------------------------------------------------
+# Fix B (real-mode Kingbird run): research had 17 states / $4.3B; Block 2 said
+# "12 states / $4.3B" — a number in a generated block that doesn't trace to
+# the research/personalization object is an extraction-drift or hallucination
+# risk and must not ship.
+# ---------------------------------------------------------------------------
+def test_find_grounding_violations_catches_ungrounded_dollar_figure():
+    corpus = '{"aum_display": "$4.4B", "geography": "17 states"}'
+    violations = find_grounding_violations("You manage roughly $5.2B across the Southeast.", corpus)
+    assert any("5.2B" in v for v in violations), violations
+
+
+def test_find_grounding_violations_allows_figure_present_in_corpus():
+    corpus = '{"aum_display": "$4.4B", "geography": "17 states"}'
+    violations = find_grounding_violations("You manage roughly $4.4B across 17 states.", corpus)
+    assert violations == []
+
+
+def test_find_grounding_violations_ignores_text_with_no_numbers():
+    assert find_grounding_violations("A clean sentence with no figures at all.", "") == []
+
+
+def test_find_grounding_violations_catches_a_number_copied_from_the_template_example(monkeypatch):
+    """QA finding (this fix's own verification run): referral_email.md's
+    Block 4 'Good example' text includes a specific count ("40+ entities") as
+    a style sample. A real LLM call echoed that exact number into a live
+    Kingbird draft where it had no basis in the research object at all."""
+    corpus = '{"aum_display": "$4.4B", "geography": "US secondary markets, 12 states"}'
+    text = ("When your controller is stuck between overpaying a provider who doesn't "
+           "understand your waterfalls, or burning nights on property-level books "
+           "across 40+ entities, the inertia costs you every quarter.")
+    violations = find_grounding_violations(text, corpus)
+    assert any("40" in v for v in violations), violations
+
+
+def test_real_mode_llm_output_with_ungrounded_number_falls_back_instead_of_shipping(monkeypatch):
+    """Proves find_grounding_violations() actually gates the real-mode LLM
+    generation path: a monkeypatched 'LLM' that drifts research's $4.4B/17
+    states into $4.3B/12 states must be rejected, not shipped."""
+    monkeypatch.setattr(config, "TEST_MODE", False)
+
+    class _FakeUsage:
+        total_tokens = 100
+        cost_usd = 0.0
+
+    def _fake_complete_json_retry(prompt, **kwargs):
+        return ({"block_2": "You manage roughly $4.3B in GAV across 12 states and Puerto Rico.",
+                "block_4": "That inertia costs you every close, every single month."}, _FakeUsage())
+
+    import lib_snapshot.models as real_models
+    monkeypatch.setattr(real_models, "complete_json_retry", _fake_complete_json_retry)
+
+    research = {"firm_oneliner": "A multifamily investor.", "aum_display": "$4.4B",
+               "geography": "17 states and Puerto Rico"}
+    block2, block4, used_fallback = _generate_blocks(KINGBIRD, research, {"thin_personalization": False})
+    assert used_fallback is True
+    assert block2 == research["firm_oneliner"]
+    assert block4 == _THIN_FALLBACK_BLOCK_4
+
+
+# ---------------------------------------------------------------------------
+# Fix D (real-mode Kingbird run): Block 2 and Block 4 both said "roughly
+# 21,000 units" — Block 4 must add a NEW fact, not restate one Block 2
+# already used.
+# ---------------------------------------------------------------------------
+def test_find_redundant_claims_catches_repeated_unit_count():
+    block2 = "You manage roughly 21,000 multifamily units across 17 states."
+    block4 = "Managing 21,000 units for third-party LPs means onboarding friction is expensive."
+    violations = find_redundant_claims(block2, block4)
+    assert any("21000" in v for v in violations), violations
+
+
+def test_find_redundant_claims_allows_distinct_numbers():
+    block2 = "You manage roughly 21,000 multifamily units across 17 states."
+    block4 = "With 40+ entities in the capital stack, your controller is stretched thin at close."
+    assert find_redundant_claims(block2, block4) == []
+
+
+def test_real_mode_llm_output_with_redundant_claim_falls_back_instead_of_shipping(monkeypatch):
+    monkeypatch.setattr(config, "TEST_MODE", False)
+
+    class _FakeUsage:
+        total_tokens = 100
+        cost_usd = 0.0
+
+    def _fake_complete_json_retry(prompt, **kwargs):
+        return ({"block_2": "You manage roughly 21,000 multifamily units across 17 states.",
+                "block_4": "Managing 21,000 units for third-party LPs means onboarding is expensive."},
+               _FakeUsage())
+
+    import lib_snapshot.models as real_models
+    monkeypatch.setattr(real_models, "complete_json_retry", _fake_complete_json_retry)
+
+    research = {"firm_oneliner": "A multifamily investor.", "geography": "17 states",
+               "unit_count_note": "21,000 multifamily units"}
+    block2, block4, used_fallback = _generate_blocks(KINGBIRD, research, {"thin_personalization": False})
+    assert used_fallback is True
     assert block4 == _THIN_FALLBACK_BLOCK_4
 
 
