@@ -79,12 +79,27 @@ def _pick_column(header_row: list[str]) -> tuple[int, list[str]]:
 
 
 def _dedupe_preserve_order(names: list[str]) -> list[str]:
+    """Whitespace-normalized (existing behavior, unchanged) AND
+    case-insensitive (FIX 32A Part C): a real 17-row upload collapsed
+    "Atlas Real Estate " (trailing space) against "Atlas Real Estate" fine,
+    but did NOT collapse "in-rel properties" against "In-Rel Properties" --
+    that ran as a full second research pass before the downstream
+    contact-level dedup caught it. The surviving string keeps the FIRST
+    occurrence's original casing (dedup key is lowercased separately),
+    since that string is what gets shown in Telegram and passed to the
+    firm matcher. Deliberately NOT stripping internal punctuation (commas,
+    periods, "&") or collapsing internal whitespace runs beyond this --
+    no real observed input justifies it, and real connections.csv entries
+    ("Homeland Capital Partners, LLP", "C6 Capital, LLC.", "Das & Co.",
+    "Keller Williams Realty, Inc.") show that punctuation is often part of
+    the legitimate name, not noise to normalize away."""
     seen: set[str] = set()
     out = []
     for n in names:
         key = n.strip()
-        if key and key not in seen:
-            seen.add(key)
+        dedup_key = key.lower()
+        if key and dedup_key not in seen:
+            seen.add(dedup_key)
             out.append(key)
     return out
 

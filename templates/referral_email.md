@@ -13,9 +13,14 @@
 #   {{poc_first_name}}  - from connections/Apollo
 #   {{poc_email}}        - from connections/Apollo
 #   {{firm_short}}       - LLM-derived common name (no legal suffix)
-#   {{research_object}}  - JSON: firm_oneliner, aum_value, asset_class,
-#                          geography, capital_stack, recent_event, hook_1,
-#                          hook_2, pain_point_angle, service_fit (from Phase 2/4)
+#   {{research_object}}  - JSON: firm_oneliner, disclosed_figure,
+#                          disclosed_label, asset_class, geography,
+#                          capital_stack, recent_event, hook_1, hook_2,
+#                          pain_point_angle, service_fit (from Phase 2/4).
+#                          disclosed_figure/disclosed_label (FIX 22) are
+#                          the ONLY AUM-shaped fields — exactly what the
+#                          firm published, verbatim, never a haircut or
+#                          derived number.
 
 ## Subject (FIXED, never changes)
 Intro via Manpreet Singh (Singh Capital)
@@ -44,14 +49,64 @@ class, a recent deal or fund close, a portfolio milestone, their geographic
 focus, number of units/properties, or a public event. This is NOT a compliment.
 It is a fact that proves homework.
 
+FIX 10 (real-mode Kairos Real Estate Partners run): if the research object
+has a disclosed_figure value, this block MUST include it — the gate
+already verified this figure before qualifying the firm; leaving it out
+entirely is a real, confirmed defect this rule closes, not an option.
+
+FIX 22 (real-mode In-Rel Properties run): disclosed_figure /
+disclosed_label are the ONLY AUM-shaped fields this block may state —
+exactly what the firm itself published, verbatim, no arithmetic. NEVER
+state a haircut or derived number instead: a $4.4B disclosed GAV firm
+gates internally at ~$1.76B (60% leverage haircut) and qualifies, but the
+email states "$4.4B", never "$1.76B" — the haircut is machinery for the
+gate decision, not a fact about the firm. Phrase it according to aum_tag
+and proxy_type, honestly:
+- aum_tag AUM_CONFIRMED: state disclosed_figure plainly — "You manage
+  $450M in AUM..." It is a confirmed fact.
+- aum_tag AUM_ESTIMATED and proxy_type "gav": disclosed_figure IS the
+  firm's own disclosed figure (Gross Asset Value, disclosed_label reads
+  something like "gross asset value") — state it plainly too, e.g. "You
+  run $4.4B in GAV across...". Do not call it "estimated" and do not
+  substitute the internal haircut-adjusted figure — it is a real, publicly
+  disclosed number, just gross rather than net of leverage.
+- aum_tag AUM_ESTIMATED, proxy_type "floor" or "non_floor": disclosed_figure
+  is a proxy dollar figure, not a confirmed AUM — phrase it as one, and
+  match the proxy's ACTUAL shape rather than implying it's a current asset
+  base:
+  - an invested/deployed-capital proxy (proxy_basis mentions "invested
+    capital" or "deployed") is a CUMULATIVE figure summed over the firm's
+    whole operating history, not a snapshot of what it currently manages
+    (FIX 16, real-mode Kairos run) — phrase it with a "since
+    <founded_year>" framing: "roughly $254M deployed since 2013". NOT
+    "$254M across the portfolio" or "$254M deployed across [markets]" —
+    that phrasing implies a currently-held asset base, which invested
+    capital is not (matches the deck's own "Capital Invested (since
+    2013)" stat-tile label — see deck_filler.py's _aum_label_for).
+  - a portfolio-value/fund-size proxy IS a snapshot-style figure, so
+    phrasing it as an estimate of current holdings is fine: "with an
+    estimated $X portfolio value...", "roughly $X in fund size...".
+  Never state a genuine proxy as flat, unqualified AUM ("You manage $254M
+  in AUM" overclaims certainty the research doesn't have).
+- aum_tag AUM_ESTIMATED and proxy_type "units": there is NO dollar figure
+  at all for this firm — disclosed_figure holds the raw disclosed
+  QUANTITY (a unit count or square footage, e.g. "3,000,000 sq ft" or
+  "21,794 units"), never a dollar estimate. State the quantity itself,
+  using disclosed_label for what it measures: "you manage roughly
+  3,000,000 sq ft of office and retail space" or "you run about 21,794
+  units across the Southeast." NEVER invent or state a dollar figure for
+  this proxy type (no "~$240M", no "roughly $X in assets") — no such
+  number was ever disclosed by the firm, and none should appear anywhere
+  in this email.
+
 Rules:
 - Must reference something specific to THIS firm. No generic RE industry talk.
 - Must be verifiable from research sources. No invented details.
-- Every number (dollar figure, unit count, state count) must be copied
-  VERBATIM from the research object. Never round, re-derive, or paraphrase
-  a figure that already exists there — if research says 17 states and
-  $4.4B, write 17 states and $4.4B, not "several states" and not a nearby
-  number that sounds about right.
+- Every number (dollar figure, unit count, state count, square footage)
+  must be copied VERBATIM from the research object. Never round,
+  re-derive, or paraphrase a figure that already exists there — if
+  research says 17 states and $4.4B, write 17 states and $4.4B, not
+  "several states" and not a nearby number that sounds about right.
 - No superlatives ("impressive portfolio", "remarkable growth"). State facts.
 - No "I noticed that..." or "I was impressed by..." or "I came across..."
   State the fact the way you would say it on a phone call, as context for
@@ -91,6 +146,14 @@ Rules:
 - Keep the core insight: "overpaying a provider OR burning your controller's
   nights." Connect it to what we know about their fund structures, asset
   class, entity count, or reporting complexity.
+- The core insight above MUST appear in the FIRST sentence, not a later one.
+  The length guard drops trailing sentences first when the email runs over
+  budget, so anything essential has to lead — a Block 4 that opens with pure
+  scene-setting and saves the "overpaying vs. burning nights" choice for a
+  second sentence risks losing that choice entirely to trimming before it
+  ever ships. The closing beat below is different: it may land in a later
+  sentence, and it is expendable if the email runs long — only the core
+  insight is required to lead.
 - End with something close to "That inertia has a price, and you're paying
   it every close." The line works. Keep the spirit.
 - 2-3 sentences. 30-50 words.
@@ -155,9 +218,10 @@ P.S. Manpreet can vouch for the work.
 
 ## Generation rules (system-level, not shown in email)
 
-1. LENGTH GUARD: Total email body max 230 words. The fixed blocks are about
-   160 words. Block 2 adds 15-30 words. Block 4 adds 30-50 words. If the
-   generated blocks push past 230 total, trim Block 4 first, then Block 2.
+1. LENGTH GUARD: Total email body max 260 words. The fixed blocks are about
+   204 words once assembled. Block 2 adds 15-30 words. Block 4 adds 30-50
+   words. If the generated blocks push past 260 total, trim Block 4 first,
+   then Block 2.
 
 2. TONE: Harp's voice. Direct, confident, zero filler, no corporate speak.
    The fixed blocks ARE the reference. Read them before generating. The

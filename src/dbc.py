@@ -419,15 +419,89 @@ def find_prior_contact(linkedin_url: Optional[str], email: Optional[str]) -> Opt
     return None
 
 
+def find_within_run_contact(run_id: int, linkedin_url: Optional[str],
+                            email: Optional[str]) -> Optional[dict]:
+    """FIX 38: the WITHIN-run half of HARD RULE 7 / Feature 3 (the same real
+    person appearing under 3+ target-list entries in ONE batch must still
+    draft exactly once), kept structurally SEPARATE from find_prior_contact
+    (now advisory-only for genuine cross-run history). Mirrors
+    find_prior_contact's own matching logic exactly -- normalized LinkedIn
+    URL first, email fallback -- but scoped to THIS run_id alone, via a join
+    across wc_drafts -> wc_firms -> connections (no migration: contacted_pocs
+    has no run_id column at all, so this is the only way to distinguish "an
+    earlier firm in THIS SAME run already drafted this person" from "a
+    genuinely different run drafted them, maybe years ago"). Only
+    email_status='drafted' rows count -- a 'skipped_duplicate' row was never
+    an actual contact, so it must never itself become something a THIRD
+    occurrence collides with (matches find_prior_contact's own "the earliest
+    real contact wins" semantics, just run-scoped). Returns a dict shaped
+    exactly like a contacted_pocs row (poc_name/firm_name/contacted_at/
+    source_workflow) so the existing _collision_note() formatter works on
+    either return value unchanged."""
+    with cursor() as cur:
+        if linkedin_url:
+            cur.execute(
+                "SELECT c.poc_name AS poc_name, f.firm_name AS firm_name, "
+                "d.created_at AS contacted_at, 'C' AS source_workflow "
+                "FROM wc_drafts d JOIN wc_firms f ON f.id = d.firm_id "
+                "JOIN connections c ON c.id = d.connection_id "
+                "WHERE f.run_id = %s AND d.email_status = 'drafted' AND c.linkedin_url IS NOT NULL AND "
+                "lower(rtrim(regexp_replace(c.linkedin_url, '^https?://(www\\.)?', ''), '/')) = "
+                "lower(rtrim(regexp_replace(%s, '^https?://(www\\.)?', ''), '/')) "
+                "ORDER BY d.created_at LIMIT 1",
+                (run_id, linkedin_url),
+            )
+            row = cur.fetchone()
+            if row:
+                return row
+        if email:
+            cur.execute(
+                "SELECT c.poc_name AS poc_name, f.firm_name AS firm_name, "
+                "d.created_at AS contacted_at, 'C' AS source_workflow "
+                "FROM wc_drafts d JOIN wc_firms f ON f.id = d.firm_id "
+                "JOIN connections c ON c.id = d.connection_id "
+                "WHERE f.run_id = %s AND d.email_status = 'drafted' AND lower(d.poc_email) = lower(%s) "
+                "ORDER BY d.created_at LIMIT 1",
+                (run_id, email),
+            )
+            row = cur.fetchone()
+            if row:
+                return row
+    return None
+
+
 def record_contacted(linkedin_url: Optional[str], email: Optional[str], poc_name: str,
                      firm_name: str, gmail_draft_id: str, source_workflow: str = "C") -> None:
+    """FIX 38 Part B: was ON CONFLICT ... DO NOTHING (a repeat draft's insert
+    silently no-opped, leaving contacted_pocs's one linkedin_url-unique row
+    forever pointing at whatever gmail_draft_id happened to be recorded
+    first -- stale/deleted once cross-run contact stopped blocking and
+    started actually re-drafting). The partial unique index only constrains
+    linkedin_url, so a genuinely NEW row is still possible (and inserted)
+    whenever this contact's linkedin_url is null or doesn't already occupy
+    that index -- e.g. an email-only match, or a different real person who
+    happens to share an email. Only a literal linkedin_url repeat is
+    structurally blocked from a second row; for that case alone, UPDATE the
+    existing row to this latest contact event -- every field, not just the
+    date, so the one row that CAN exist stays internally coherent (a
+    gmail_draft_id pointing at the new draft while poc_name/firm_name still
+    named the old contact would be a more confusing record than the field
+    it's overwriting). This never loses the earlier date silently: the
+    caller reads the PRIOR row via find_prior_contact() and builds its
+    advisory message from it BEFORE this write ever runs."""
     with conn() as c:
         with c.cursor() as cur:
             cur.execute(
                 """INSERT INTO contacted_pocs
                    (linkedin_url, email, poc_name, firm_name, source_workflow, gmail_draft_id)
                    VALUES (%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT (linkedin_url) WHERE linkedin_url IS NOT NULL DO NOTHING""",
+                   ON CONFLICT (linkedin_url) WHERE linkedin_url IS NOT NULL DO UPDATE SET
+                     email = EXCLUDED.email,
+                     poc_name = EXCLUDED.poc_name,
+                     firm_name = EXCLUDED.firm_name,
+                     contacted_at = now(),
+                     gmail_draft_id = EXCLUDED.gmail_draft_id,
+                     source_workflow = EXCLUDED.source_workflow""",
                 (linkedin_url, email, poc_name, firm_name, source_workflow, gmail_draft_id),
             )
         c.commit()

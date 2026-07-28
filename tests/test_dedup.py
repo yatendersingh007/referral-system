@@ -102,28 +102,43 @@ def _patch_apollo(monkeypatch, email_by_url: dict[str, str]):
 
 # ---------------------------------------------------------------------------
 # 1. Same person, same firm, across two separate runs
+#
+# FIX 38 (live 15-firm batch, 2026-07-27): a cross-run prior-contact hit used
+# to SKIP unconditionally. contacted_pocs only proves a Gmail DRAFT was once
+# created (HARD RULE 1: this system never sends -- Harp reviews and sends by
+# hand, and would catch/delete an unwanted repeat himself), so it is now
+# ADVISORY -- the firm drafts again, flagged loudly via prior_contact_note,
+# rather than being silently skipped. The within-run guarantee below (test 4
+# and the batch-scale tests) is UNCHANGED -- only this cross-run half moved.
 # ---------------------------------------------------------------------------
-def test_same_person_same_firm_across_two_runs_not_double_drafted(monkeypatch, _fake_gmail):
+def test_same_person_same_firm_across_two_runs_drafts_again_with_advisory(monkeypatch, _fake_gmail):
     conn = _make_connection("https://linkedin.com/in/person1", "Pat Jones", "Acme Capital Partners",
                             email_seed="pat@acme.example")
     firm1 = _qualified_firm("Acme Capital Partners")
 
     result1 = pipeline.process_referral_firm(firm1["id"])
     assert result1["outcome"] == "drafted"
+    assert "prior_contact_note" not in result1
     assert len(_fake_gmail.created_drafts) == 1
 
     # A second, independent run targeting the SAME firm/person (e.g. operator
     # re-runs /referral "Acme Capital Partners" the next day).
     firm2 = _qualified_firm("Acme Capital Partners")
     result2 = pipeline.process_referral_firm(firm2["id"])
-    assert result2["outcome"] == "skipped_duplicate"
-    assert len(_fake_gmail.created_drafts) == 1, "must not create a second Gmail draft for the same person"
+    assert result2["outcome"] == "drafted", "cross-run history is advisory now, not blocking -- it must still draft"
+    assert "Pat Jones" in result2["prior_contact_note"]
+    assert "Acme Capital Partners" in result2["prior_contact_note"]
+    assert len(_fake_gmail.created_drafts) == 2, "the second run must create its own real Gmail draft"
+
+    draft2 = dbc.wc_draft_for_firm(firm2["id"])
+    assert draft2["email_status"] == "drafted"
+    assert draft2["collision_note"] == result2["prior_contact_note"]
 
 
 # ---------------------------------------------------------------------------
 # 2. Same email, different firm name (the email-fallback catch)
 # ---------------------------------------------------------------------------
-def test_same_email_under_a_different_firm_name_caught_by_email_fallback(_fake_gmail):
+def test_same_email_under_a_different_firm_name_flagged_advisory_by_email_fallback(_fake_gmail):
     _make_connection("https://linkedin.com/in/person2a", "Sam Lee", "Firm Alpha LLC",
                      email_seed="sam@shared.example")
     firm_a = _qualified_firm("Firm Alpha LLC")
@@ -132,19 +147,21 @@ def test_same_email_under_a_different_firm_name_caught_by_email_fallback(_fake_g
 
     # A DIFFERENT LinkedIn URL, DIFFERENT company, but the SAME seed email
     # (e.g. someone dual-listed, or a data entry quirk) — must be caught by
-    # the email fallback even though the linkedin_url doesn't match.
+    # the email fallback even though the linkedin_url doesn't match. Cross-run
+    # -> advisory, not a skip.
     _make_connection("https://linkedin.com/in/person2b", "Sam Lee", "Firm Beta Partners",
                      email_seed="sam@shared.example")
     firm_b = _qualified_firm("Firm Beta Partners")
     result_b = pipeline.process_referral_firm(firm_b["id"])
-    assert result_b["outcome"] == "skipped_duplicate"
-    assert len(_fake_gmail.created_drafts) == 1
+    assert result_b["outcome"] == "drafted"
+    assert "Sam Lee" in result_b["prior_contact_note"]
+    assert len(_fake_gmail.created_drafts) == 2
 
 
 # ---------------------------------------------------------------------------
 # 3. Same LinkedIn URL, null email on both sides
 # ---------------------------------------------------------------------------
-def test_same_linkedin_url_with_no_email_still_deduped(monkeypatch, _fake_gmail):
+def test_same_linkedin_url_with_no_email_still_flagged_advisory(monkeypatch, _fake_gmail):
     _make_connection("https://linkedin.com/in/person3", "Jamie Fox", "Gamma Realty Partners",
                      email_seed=None)
     _patch_apollo(monkeypatch, {"https://linkedin.com/in/person3": "jamie@gamma.example"})
@@ -153,39 +170,123 @@ def test_same_linkedin_url_with_no_email_still_deduped(monkeypatch, _fake_gmail)
     result1 = pipeline.process_referral_firm(firm1["id"])
     assert result1["outcome"] == "drafted"
 
-    # Re-process the same URL again (no seed email either run) — dedup must
-    # catch this via linkedin_url alone, without needing an email at all.
+    # Re-process the same URL again (no seed email either run) — the
+    # cross-run prior-contact match must still be found via linkedin_url
+    # alone, without needing an email at all, but it is now advisory.
     firm2 = _qualified_firm("Gamma Realty Partners")
     result2 = pipeline.process_referral_firm(firm2["id"])
-    assert result2["outcome"] == "skipped_duplicate"
-    assert len(_fake_gmail.created_drafts) == 1
+    assert result2["outcome"] == "drafted"
+    assert "Jamie Fox" in result2["prior_contact_note"]
+    assert len(_fake_gmail.created_drafts) == 2
 
 
 # ---------------------------------------------------------------------------
 # 4. Same person under two firms WITHIN one batch (write-after-each-draft
 # ordering — the second firm's check must see the first firm's COMMITTED
 # contacted_pocs row, with no batching/lazy-commit race)
+#
+# FIX 38: this is the guarantee that must NOT change -- deliberately given a
+# SHARED run_id (via _qualified_firm_in_run, defined below) so it's a genuine
+# within-run case under the new split, rather than the cross-run scenario
+# test 1 above now covers (this test previously used two separate single_firm
+# runs, which -- pre-FIX-38 -- didn't matter, since run_id was irrelevant to
+# the old, unsplit dedup check).
 # ---------------------------------------------------------------------------
 def test_same_person_two_firms_within_one_batch_ordering(_fake_gmail):
     """Simulates a batch where the operator's target list resolves two
     entries to the SAME real company (e.g. 'Delta Holdings LP' typed twice,
     or two near-duplicate names the matcher both resolves to the same
-    canonical firm) — two wc_firms rows, same underlying connection, same top
-    POC. The second row's dedup check must see the first row's
-    contacted_pocs write from earlier in the SAME sequential batch drain."""
+    canonical firm) — two wc_firms rows under ONE run_id, same underlying
+    connection, same top POC. The second row's dedup check must see the
+    first row's contacted_pocs write from earlier in the SAME sequential
+    batch drain, and must still BLOCK (not just advise)."""
     _make_connection("https://linkedin.com/in/person4", "Morgan Blake", "Delta Holdings LP",
                      email_seed="morgan@delta.example")
-    firm_first = _qualified_firm("Delta Holdings LP")
-    firm_second = _qualified_firm("Delta Holdings LP")
+    run = dbc.create_wc_run("batch")
+    firm_first = _qualified_firm_in_run(run["id"], "Delta Holdings LP")
+    firm_second = _qualified_firm_in_run(run["id"], "Delta Holdings LP")
 
     result_first = pipeline.process_referral_firm(firm_first["id"])
     assert result_first["outcome"] == "drafted"
     result_second = pipeline.process_referral_firm(firm_second["id"])
     assert result_second["outcome"] == "skipped_duplicate", (
         "the second firm row's dedup check must see the first row's contacted_pocs "
-        "write from earlier in the SAME batch drain, not just across separate runs"
+        "write from earlier in the SAME batch drain, not just across separate runs -- "
+        "and, being WITHIN the same run, must still BLOCK"
     )
     assert len(_fake_gmail.created_drafts) == 1
+
+
+# ---------------------------------------------------------------------------
+# 4b. Direct unit coverage of dbc.find_within_run_contact() and
+# dbc.record_contacted()'s new write behavior -- FIX 38 Part B/DIAGNOSE-3's
+# split, exercised at the dbc layer directly rather than only through
+# process_referral_firm end-to-end (matches this module's own stated
+# preference for end-to-end coverage where possible, but these two functions
+# are new enough, and their run-scoping/conflict behavior specific enough,
+# to warrant a direct check too).
+# ---------------------------------------------------------------------------
+def test_find_within_run_contact_is_scoped_to_run_id_not_global(_fake_gmail):
+    """find_within_run_contact must find a match for the SAME run_id (still
+    blocking) and MUST NOT find one for a DIFFERENT run_id, even though
+    find_prior_contact (the cross-run, now-advisory check) finds it either
+    way -- that contrast IS the split FIX 38 introduces."""
+    _make_connection("https://linkedin.com/in/within-run-direct", "Direct Test Person", "Firm Alpha LLC",
+                     email_seed="direct@example.com")
+    run_a = dbc.create_wc_run("batch")
+    firm_a = _qualified_firm_in_run(run_a["id"], "Firm Alpha LLC")
+    result_a = pipeline.process_referral_firm(firm_a["id"])
+    assert result_a["outcome"] == "drafted"
+
+    within = dbc.find_within_run_contact(run_a["id"], "https://linkedin.com/in/within-run-direct", None)
+    assert within is not None
+    assert within["poc_name"] == "Direct Test Person"
+
+    run_b = dbc.create_wc_run("batch")
+    within_other_run = dbc.find_within_run_contact(run_b["id"], "https://linkedin.com/in/within-run-direct", None)
+    assert within_other_run is None, "a different run_id must never be caught by the WITHIN-run check"
+    assert dbc.find_prior_contact("https://linkedin.com/in/within-run-direct", None) is not None, (
+        "the CROSS-run check must still find it -- that's exactly what makes it advisory, not absent"
+    )
+
+
+def test_record_contacted_updates_existing_row_on_a_repeat_linkedin_url_contact():
+    """FIX 38 Part B: the unique index on linkedin_url makes a second literal
+    row impossible for a repeat contact of the SAME person -- must UPDATE in
+    place (contacted_at + gmail_draft_id) rather than silently no-op (the
+    OLD 'DO NOTHING', which left the row pointing at a possibly-deleted
+    first draft forever once cross-run contact stopped blocking)."""
+    dbc.record_contacted("https://linkedin.com/in/repeat-url-person", "first@example.com",
+                         "Repeat Person", "First Firm", "TESTMODE-DRAFT-A")
+    first = dbc.find_prior_contact("https://linkedin.com/in/repeat-url-person", None)
+    assert first["gmail_draft_id"] == "TESTMODE-DRAFT-A"
+    assert first["firm_name"] == "First Firm"
+
+    dbc.record_contacted("https://linkedin.com/in/repeat-url-person", "first@example.com",
+                         "Repeat Person", "Second Firm", "TESTMODE-DRAFT-B")
+    with dbc.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM contacted_pocs WHERE linkedin_url = %s",
+                    ("https://linkedin.com/in/repeat-url-person",))
+        count = cur.fetchone()["n"]
+    assert count == 1, "the unique linkedin_url index allows only one row -- must UPDATE, never insert a second"
+
+    second = dbc.find_prior_contact("https://linkedin.com/in/repeat-url-person", None)
+    assert second["gmail_draft_id"] == "TESTMODE-DRAFT-B", "must reflect the LATEST contact, not the stale first one"
+    assert second["firm_name"] == "Second Firm"
+
+
+def test_record_contacted_inserts_a_second_row_for_an_email_only_repeat_contact():
+    """No unique constraint on email alone -- a repeat contact matched only
+    by email (no linkedin_url) gets its OWN new row, growing the audit
+    trail rather than colliding with anything, per Part B's "insert a
+    second row whenever the schema allows it" branch."""
+    dbc.record_contacted(None, "shared-repeat@example.com", "Person One", "Firm One", "TESTMODE-DRAFT-C")
+    dbc.record_contacted(None, "shared-repeat@example.com", "Person One", "Firm Two", "TESTMODE-DRAFT-D")
+    with dbc.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS n FROM contacted_pocs WHERE email = %s",
+                    ("shared-repeat@example.com",))
+        count = cur.fetchone()["n"]
+    assert count == 2, "email carries no unique constraint -- each draft event must get its own row"
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +316,10 @@ def test_different_people_same_firm_not_deduped(_fake_gmail):
 
 # ---------------------------------------------------------------------------
 # 6. Apollo resolving the SAME email for two different LinkedIn URLs
-# (the exact bug this section fixed in src/pipeline.py)
+# (the exact bug the ORIGINAL fix addressed in src/pipeline.py -- now
+# exercised as a cross-run advisory hit, per FIX 38)
 # ---------------------------------------------------------------------------
-def test_apollo_same_email_two_different_urls_second_caught_by_email_fallback(monkeypatch, _fake_gmail):
+def test_apollo_same_email_two_different_urls_flagged_advisory_by_email_fallback(monkeypatch, _fake_gmail):
     _make_connection("https://linkedin.com/in/eta1", "Eta One", "Eta Capital Advisors", email_seed=None)
     _make_connection("https://linkedin.com/in/eta2", "Eta Two", "Theta Capital Advisors", email_seed=None)
     _patch_apollo(monkeypatch, {
@@ -231,15 +333,18 @@ def test_apollo_same_email_two_different_urls_second_caught_by_email_fallback(mo
 
     firm_theta = _qualified_firm("Theta Capital Advisors")
     result_theta = pipeline.process_referral_firm(firm_theta["id"])
-    assert result_theta["outcome"] == "skipped_duplicate", (
-        "two different LinkedIn URLs resolving to the same real email via Apollo "
-        "must be caught by the post-Apollo email-fallback dedup check"
+    assert result_theta["outcome"] == "drafted", (
+        "two different LinkedIn URLs resolving to the same real email via Apollo, across "
+        "separate runs, is now an advisory cross-run hit caught by the post-Apollo "
+        "email-fallback check -- it must still draft"
     )
-    assert len(_fake_gmail.created_drafts) == 1
+    assert "Eta One" in result_theta["prior_contact_note"]
+    assert len(_fake_gmail.created_drafts) == 2
 
     draft_theta = dbc.wc_draft_for_firm(firm_theta["id"])
-    assert draft_theta["email_status"] == "skipped_duplicate"
+    assert draft_theta["email_status"] == "drafted"
     assert draft_theta["poc_email"] == "shared.inbox@example.com"
+    assert draft_theta["collision_note"] == result_theta["prior_contact_note"]
 
 
 # ---------------------------------------------------------------------------
@@ -422,11 +527,13 @@ def test_batch_scale_mixed_duplicates_and_genuinely_different_people(monkeypatch
 # comparison in the query (no migration -- it normalizes the comparison, not
 # the stored value).
 # ---------------------------------------------------------------------------
-def test_same_person_url_trailing_slash_variant_with_different_emails_still_deduped(monkeypatch, _fake_gmail):
-    """The exact scenario that broke dedup before the fix: no seed email (so
-    the pre-Apollo check has nothing to catch), Apollo resolves each URL
-    variant to a genuinely DIFFERENT email, and the only remaining signal is
-    the LinkedIn URL itself -- which differs only by a trailing slash."""
+def test_same_person_url_trailing_slash_variant_with_different_emails_flagged_advisory(monkeypatch, _fake_gmail):
+    """The exact scenario that broke dedup before the ORIGINAL fix: no seed
+    email, Apollo resolves each URL variant to a genuinely DIFFERENT email,
+    and the only remaining signal is the LinkedIn URL itself -- which
+    differs only by a trailing slash. FIX 38: cross-run, so this is now
+    advisory (drafts again) rather than a skip -- the normalization guarantee
+    itself (that the match is found AT ALL) is what this test still proves."""
     _make_connection("https://linkedin.com/in/url-variant-person", "Drew Okafor", "Iota Capital Partners",
                      email_seed=None)
     _make_connection("https://linkedin.com/in/url-variant-person/", "Drew Okafor", "Kappa Capital Partners",
@@ -447,25 +554,25 @@ def test_same_person_url_trailing_slash_variant_with_different_emails_still_dedu
 
     firm_kappa = _qualified_firm("Kappa Capital Partners")
     result_kappa = pipeline.process_referral_firm(firm_kappa["id"])
-    assert result_kappa["outcome"] == "skipped_duplicate", (
-        "a trailing-slash URL formatting difference must not defeat dedup when "
+    assert result_kappa["outcome"] == "drafted", (
+        "a trailing-slash URL formatting difference must not defeat the prior-contact match when "
         "the resolved emails ALSO differ -- the URL match itself must be normalized"
     )
-    assert len(_fake_gmail.created_drafts) == 1
+    assert "Drew Okafor" in result_kappa["prior_contact_note"]
+    assert len(_fake_gmail.created_drafts) == 2
 
 
-def test_same_person_url_protocol_and_www_prefix_variant_still_deduped(_fake_gmail):
+def test_same_person_url_protocol_and_www_prefix_variant_still_flagged_advisory(monkeypatch, _fake_gmail):
     """Same guarantee, different formatting variance: http vs https and a
-    www. prefix. The FIRST entry has a seed email (so it drafts without
-    touching Apollo); the SECOND has no seed email at all, so if the URL
-    match doesn't catch it pre-Apollo, it would fall through to a real
-    Apollo call and very likely come back no_email_found for a fixture-less
-    synthetic name -- isolating the URL match itself, not the email
-    fallback, as the thing that must catch this."""
+    www. prefix. FIX 38: cross-run history is advisory now, so BOTH entries
+    draft -- Apollo is patched for the second (no seed email) so the run
+    reaches drafting and the advisory note becomes observable end-to-end,
+    proving the URL match itself (not the email fallback) is what found it."""
     _make_connection("http://www.linkedin.com/in/protocol-variant-person", "Sasha Kim", "Lambda Capital Advisors",
                      email_seed="sasha.k@example.com")
     _make_connection("https://linkedin.com/in/protocol-variant-person", "Sasha Kim", "Mu Capital Advisors",
                      email_seed=None)
+    _patch_apollo(monkeypatch, {"https://linkedin.com/in/protocol-variant-person": "sasha.k@example.com"})
 
     firm_lambda = _qualified_firm("Lambda Capital Advisors")
     result_lambda = pipeline.process_referral_firm(firm_lambda["id"])
@@ -473,8 +580,9 @@ def test_same_person_url_protocol_and_www_prefix_variant_still_deduped(_fake_gma
 
     firm_mu = _qualified_firm("Mu Capital Advisors")
     result_mu = pipeline.process_referral_firm(firm_mu["id"])
-    assert result_mu["outcome"] == "skipped_duplicate"
-    assert len(_fake_gmail.created_drafts) == 1
+    assert result_mu["outcome"] == "drafted"
+    assert "Sasha Kim" in result_mu["prior_contact_note"]
+    assert len(_fake_gmail.created_drafts) == 2
 
 
 def test_genuinely_different_people_different_urls_not_falsely_merged_by_normalization(_fake_gmail):

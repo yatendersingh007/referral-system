@@ -264,6 +264,10 @@ def test_cancelled_run_can_be_resumed_and_continues_without_redrafting(monkeypat
     monkeypatch.setattr(pipeline, "process_referral_firm", real_process)  # restore for resume
     sent = []
     monkeypatch.setattr(telegram_bot, "send", lambda text, chat_id=None: sent.append(text))
+    # FIX 25: _run_resume() also drives a live-editing status message via
+    # _send_and_get_id (not send()) -- mock it so this test never makes a
+    # real Telegram API call.
+    monkeypatch.setattr(telegram_bot, "_send_and_get_id", lambda text, chat_id=None: None)
 
     def _fake_reload_keys():
         pass  # no real Tavily pool involved in this test
@@ -298,6 +302,10 @@ def test_resume_calls_reload_keys_for_feature_a_mid_run_key_top_up(monkeypatch):
     reload_calls = []
     monkeypatch.setattr(search_client, "reload_keys", lambda: reload_calls.append(True))
     monkeypatch.setattr(telegram_bot, "send", lambda text, chat_id=None: None)
+    # FIX 25: _drain_with_live_status() sends its initial live-status
+    # message via _send_and_get_id BEFORE calling pipeline.drain_queue --
+    # mock it too so this test never makes a real Telegram API call.
+    monkeypatch.setattr(telegram_bot, "_send_and_get_id", lambda text, chat_id=None: None)
     monkeypatch.setattr(pipeline, "drain_queue",
                        lambda *a, **kw: {"processed": 0, "aborted": False})
 

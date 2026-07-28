@@ -125,16 +125,22 @@ generic (no Tavily-specific code) in case Exa adopts the same pattern later.
    estimated number) is the safe, HARD-RULE-14-compliant choice given that
    fixed layout.
 
-5. **Email length: the template's own arithmetic doesn't quite add up.**
+5. **Email length: the template's own arithmetic didn't quite add up — fixed.**
    `templates/referral_email.md`'s fixed blocks (1/3/5/6/7) total 204 words by
-   plain word-count, not the "~160" the template itself estimates. Its
+   plain word-count, not the "~160" the template itself used to estimate. Its
    generation rules also say Block 2 should add 15-30 words and Block 4
-   30-50 — which, on top of the real 204, structurally exceeds the same
-   section's stated 230-word cap. `src/email_drafter.py` trims whole trailing
-   sentences (never mid-sentence — a truncated clause reads as broken, not
-   concise) from Block 4 first, then Block 2, and logs a warning if still over
-   230 rather than mutilating a sentence to force the number. Recommend
-   Harpreet either tighten Blocks 3/5/6 or relax the cap to ~260.
+   30-50 — which, on top of the real 204, structurally exceeded the old
+   230-word cap even at the minimum (204+15+30=249). `src/email_drafter.py`
+   trims whole trailing sentences (never mid-sentence — a truncated clause
+   reads as broken, not concise) from Block 4 first, then Block 2, and logs a
+   warning if still over budget rather than mutilating a sentence to force
+   the number. Confirmed live (real-mode Kairos Real Estate Partners run,
+   the first real-mode firm in this engagement to reach Phase 5a at all): a
+   correctly-generated, single-sentence-per-block email shipped at 236 words
+   with nothing left to trim. `EMAIL_MAX_WORDS` raised from 230 to 260 (this
+   recommendation, applied) — both `src/config.py` and the template's own
+   stated cap were updated together so the model's own length-guard
+   instruction matches the code's actual enforcement.
 
 6. **Single-firm mode sends a "prospect brief" after the draft.** `src/status.py:prospect_brief_text(firm_id)`, sent from
    `_run_single_firm` only (never batch/resume) right after the existing
@@ -147,25 +153,62 @@ generic (no Tavily-specific code) in case Exa adopts the same pattern later.
    firm-specific hooks), and the draft status (Gmail draft id, with/without
    the PDF deck).
 
-7. **Feature 3's dedup guarantee, and its one real caveat.** Person-level dedup (LinkedIn URL first, email fallback,
-   HARD RULE 7) now proven at batch scale: the same real person can appear
-   under 3+ different target-list entries in one uploaded batch and will
-   still draft exactly once, correctly reported by name in the summary
-   (`collision_note`, `migrations/006_wc_drafts_collision_note.sql`). This
-   session's adversarial pass also found and fixed a real gap — the URL
-   match was a raw exact string comparison, so a trailing-slash or
+7. **Feature 3's dedup guarantee is now TWO separate guarantees, not one — FIX 38.**
+   Person-level identity matching (LinkedIn URL first, email fallback, HARD RULE 7)
+   is unchanged; what it DOES on a match now depends on WHEN the match happened:
+
+   - **Within-run (same batch, same `wc_runs.run_id`) — still BLOCKS.** The same
+     real person can appear under 3+ different target-list entries in one
+     uploaded batch and will still draft exactly once, correctly reported by
+     name (`collision_note`, `migrations/006_wc_drafts_collision_note.sql`).
+     Checked via the NEW `dbc.find_within_run_contact(run_id, ...)`, scoped to
+     THIS run via a join across `wc_drafts` → `wc_firms` → `connections` (no
+     migration — `contacted_pocs` itself carries no `run_id` at all, which is
+     exactly why this had to be a separate function rather than a parameter
+     on the old one).
+   - **Cross-run (a different/earlier run, possibly days ago) — now ADVISORY,
+     never blocks.** A live 15-firm batch (2026-07-27) found 4 of 5 qualified
+     firms silently skipped as "already contacted ... (a prior Workflow C
+     run)" purely because that SAME day's own now-deleted smoke-test drafts
+     had already written `contacted_pocs` rows — the entire batch's real
+     output was lost to the guard firing on its own test residue.
+     `contacted_pocs` only ever proved a Gmail **draft** was once created
+     (HARD RULE 1: this system never sends — Harp reviews and sends by hand,
+     and is comfortable checking his own sent history before sending, so he
+     would have caught/deleted an unwanted repeat himself). The firm now
+     proceeds through enrichment and drafting normally; the per-firm line
+     reads "drafted-with-prior-contact" instead of "SKIPPED", the end-of-run
+     summary gets its own "⚠️ N drafted, previously drafted before — check
+     your sent mail before sending" bucket naming person/firm/prior date, and
+     it counts as **drafted** in every total (not as a duplicate).
+     `dbc.record_contacted()` also changed: it used to silently no-op
+     (`ON CONFLICT ... DO NOTHING`) on a repeat contact for the same
+     LinkedIn URL, leaving that row's `gmail_draft_id` pointing at whatever
+     draft was recorded first — increasingly stale/deleted now that repeats
+     actually happen. It now `DO UPDATE`s that one row (every field, so it
+     stays internally coherent) to the LATEST contact event; the earlier
+     date is never lost silently, since the caller reads it via
+     `find_prior_contact()` and reports it in the advisory message BEFORE
+     this write ever runs. A repeat matched only by email (no shared
+     LinkedIn URL) has no unique constraint blocking it and gets a genuinely
+     new row instead, growing the audit trail rather than overwriting it.
+
+   This session's earlier adversarial pass also found and fixed a real gap —
+   the URL match was a raw exact string comparison, so a trailing-slash or
    http-vs-https/www. formatting difference between two rows for the SAME
    real profile could bypass dedup entirely if the two rows' resolved
    emails also happened to differ (`src/dbc.py:find_prior_contact` now
-   normalizes both sides of the URL comparison). **The remaining, inherent
-   caveat:** dedup is only as good as the identifiers it has. If the SAME
-   real person appears twice with a genuinely different LinkedIn URL path
-   (not just a formatting variant) AND Apollo/the seed email resolves to
-   two genuinely different addresses for them — with no shared identifier
-   at all — there is no signal left to catch it. This isn't a bug so much
-   as the fundamental limit of identity-matching without a stronger key
-   (e.g. a person's name/company alone was deliberately never used for
-   dedup, since two different real people very plausibly share a name).
+   normalizes both sides of the URL comparison; `find_within_run_contact`
+   does the same). **The remaining, inherent caveat:** identity matching is
+   only as good as the identifiers it has. If the SAME real person appears
+   twice with a genuinely different LinkedIn URL path (not just a
+   formatting variant) AND Apollo/the seed email resolves to two genuinely
+   different addresses for them — with no shared identifier at all — there
+   is no signal left to catch it, within a run or across one. This isn't a
+   bug so much as the fundamental limit of identity-matching without a
+   stronger key (e.g. a person's name/company alone was deliberately never
+   used for dedup, since two different real people very plausibly share a
+   name).
 
 8. **NEW this session — Tavily key-pool rotation (Feature A) so a big batch
    run keeps moving across quota exhaustion.** Set `TAVILY_API_KEYS` in

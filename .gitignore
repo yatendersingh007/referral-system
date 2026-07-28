@@ -26,3 +26,8 @@ generated_decks_c/
 # (has its own nested .git; found staged by an earlier `git add -A` this
 # session, unrelated to referral-system).
 .gstack-tmp/
+
+qa_out/
+.ruff_cache/
+.claude/
+generated_decks_c/

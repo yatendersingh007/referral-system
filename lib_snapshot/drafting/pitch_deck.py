@@ -248,15 +248,33 @@ def slugify(name: str) -> str:
 
 
 def _short_name(name: str) -> str:
-    """A short display name: drop entity suffixes, keep the first 1-2 tokens."""
+    """A short display name: strip legal suffixes and trailing generic
+    business-type words from the END, keeping whatever brand name remains
+    -- never truncated to a fixed word count. QA finding (real-mode Kairos
+    Real Estate Partners run): "Kairos Real Estate Partners, LLC" produced
+    "Kairos Real" under the previous design, which filtered generic words
+    from ANYWHERE in the name but then unconditionally kept only the FIRST
+    2 of whatever remained -- "real"/"estate" weren't in the drop set, so
+    both survived filtering, and the first-2-token cap grabbed "Kairos" +
+    "Real" instead of stopping at "Kairos" alone. Stripping only from the
+    END, repeatedly, until a non-generic word is hit (or one token
+    remains) fixes this: "Kairos"/"Real"/"Estate"/"Partners"/"LLC" strip
+    off the end one at a time, correctly leaving just "Kairos". A
+    multi-word brand with no generic trailing words (e.g. "Riverside Bay
+    Partners" -> "Riverside Bay") is left with BOTH remaining words, not
+    cut down to one -- this was never about a word-count limit."""
     n = re.sub(r"[,\.]", "", name or "").strip()
-    drop = {"llc", "lp", "inc", "incorporated", "corp", "corporation", "company",
-            "group", "holdings", "partners", "capital", "management", "investments",
-            "investment", "properties", "property", "realty", "&", "the"}
-    toks = [t for t in n.split() if t.lower() not in drop]
+    drop = {"llc", "lp", "l.p", "inc", "incorporated", "corp", "corporation",
+           "co", "company", "group", "holdings", "partners", "partnership",
+           "capital", "management", "investments", "investment", "properties",
+           "property", "realty", "real", "estate", "advisors", "advisers",
+           "associates", "ventures", "enterprises", "&", "the"}
+    toks = n.split()
+    while len(toks) > 1 and toks[-1].lower() in drop:
+        toks.pop()
     if not toks:
         toks = n.split()[:1]
-    return " ".join(toks[:2]) if toks else (name or "your firm")
+    return " ".join(toks) if toks else (name or "your firm")
 
 
 def _roles_line(roles: list[str]) -> str:

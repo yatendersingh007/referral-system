@@ -170,13 +170,13 @@ def main() -> int:
 
     # --- Phase 4: personalization research ---
     print("Researching public personalization hooks (Tavily/Exa + LLM extraction)...")
-    pers = personalization.research_personalization(matched_company, top["poc_name"], progress=print)
+    pers = personalization.research_personalization(matched_company, top["poc_name"], research, progress=print)
     report_lines += [
         "## Phase 4 — Personalization research",
         f"- thin_personalization: {pers.get('thin_personalization')}",
         f"- Hook 1: {pers.get('hook_1')} (source: {pers.get('hook_1_source')})",
         f"- Hook 2: {pers.get('hook_2')} (source: {pers.get('hook_2_source')})",
-        f"- Pain point angle: {pers.get('pain_point_angle')}",
+        f"- Pain point angle: {pers.get('pain_point_angle')} (source: {pers.get('pain_point_angle_source')})",
         f"- Service fit: {pers.get('service_fit')}",
         "",
     ]

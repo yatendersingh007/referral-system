@@ -15,7 +15,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from openai import OpenAI
 
@@ -84,18 +84,36 @@ class Usage:
     completion_tokens: int = 0
     total_tokens: int = 0
     cost_usd: float = 0.0
+    # Diagnosis tooling (FIX 6, real-mode Kairos review): reasoning models
+    # (gpt-5*/o-series) spend tokens on HIDDEN reasoning before any visible
+    # completion text -- reasoning_tokens (from the API's own
+    # completion_tokens_details, when the provider reports it) is what lets
+    # a caller distinguish "the model reasoned a lot and ran out of budget
+    # before writing anything visible" from "the model just declined to
+    # answer". 0 when a provider doesn't report this breakdown at all,
+    # which is itself a fact worth surfacing, not silently assumed to mean
+    # zero reasoning happened.
+    reasoning_tokens: int = 0
 
     def add(self, other: "Usage") -> None:
         self.prompt_tokens += other.prompt_tokens
         self.completion_tokens += other.completion_tokens
         self.total_tokens += other.total_tokens
         self.cost_usd += other.cost_usd
+        self.reasoning_tokens += other.reasoning_tokens
 
 
 @dataclass
 class LLMResult:
     text: str
     usage: Usage = field(default_factory=Usage)
+    # Diagnosis tooling (FIX 6): the API's own finish_reason for this
+    # completion ("stop", "length", "content_filter", ...) -- "length" with
+    # empty text is the specific, confirmable signature of a reasoning
+    # model exhausting its token budget on hidden reasoning before ever
+    # producing visible output, as opposed to some other empty-response
+    # cause (a content filter, a genuine refusal, etc.).
+    finish_reason: str = ""
 
 
 def _estimate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -116,13 +134,27 @@ def chat(
     max_tokens: int = 2000,
     json_mode: bool = False,
     retries: int = 4,
+    reasoning_effort: Optional[str] = None,
 ) -> LLMResult:
     """One chat completion with backoff retry. Returns text + token usage/cost.
 
     Routes to the endpoint that serves `model` and adapts parameters for
     reasoning models (gpt-5*/o-series): max_completion_tokens (with headroom for
     hidden reasoning) and no custom temperature.
-    """
+
+    `reasoning_effort` (only meaningful for reasoning models; ignored
+    otherwise): one of "minimal"/"low"/"medium"/"high"/etc, passed straight
+    through to the API. FIX 7 (real-mode Kairos run): confirmed live against
+    this project's actual Azure gpt-5-mini deployment (not assumed from
+    memory) that it accepts this parameter -- "minimal" reasoning effort
+    against the real, non-trivial extraction prompt produced
+    reasoning_tokens=0 (vs the FULL max_completion_tokens budget consumed
+    with the provider's own default effort, which produced
+    finish_reason="length" and empty visible output) while still returning
+    a correct, complete result. The default (None) omits the parameter
+    entirely, leaving the provider's own default effort for every OTHER
+    caller unchanged -- this is a targeted, per-call opt-in, not a global
+    behavior change."""
     model = model or config.DEFAULT_MODEL
     reasoning = _is_reasoning(model)
     kwargs: dict[str, Any] = {"model": model, "messages": messages}
@@ -130,6 +162,8 @@ def chat(
         # Reasoning tokens are spent BEFORE visible output; give real headroom
         # or content comes back empty with finish_reason='length'.
         kwargs["max_completion_tokens"] = max(max_tokens, 2048)
+        if reasoning_effort is not None:
+            kwargs["reasoning_effort"] = reasoning_effort
     else:
         kwargs["max_tokens"] = max_tokens
         kwargs["temperature"] = temperature
@@ -140,17 +174,22 @@ def chat(
     for attempt in range(retries):
         try:
             resp = client_for(model).chat.completions.create(**kwargs)
-            text = resp.choices[0].message.content or ""
+            choice = resp.choices[0]
+            text = choice.message.content or ""
+            finish_reason = getattr(choice, "finish_reason", "") or ""
             u = resp.usage
             pt = getattr(u, "prompt_tokens", 0) or 0
             ct = getattr(u, "completion_tokens", 0) or 0
+            details = getattr(u, "completion_tokens_details", None)
+            reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0 if details else 0
             usage = Usage(
                 prompt_tokens=pt,
                 completion_tokens=ct,
                 total_tokens=getattr(u, "total_tokens", pt + ct) or (pt + ct),
                 cost_usd=_estimate_cost(model, pt, ct),
+                reasoning_tokens=reasoning_tokens,
             )
-            return LLMResult(text=text, usage=usage)
+            return LLMResult(text=text, usage=usage, finish_reason=finish_reason)
         except Exception as e:  # noqa: BLE001 - surface a clean, retried error
             last_err = e
             msg = str(e).lower()
@@ -178,13 +217,15 @@ def complete(
     temperature: float = 0.4,
     max_tokens: int = 2000,
     json_mode: bool = False,
+    reasoning_effort: Optional[str] = None,
 ) -> LLMResult:
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
     return chat(messages, model=model, temperature=temperature,
-                max_tokens=max_tokens, json_mode=json_mode)
+                max_tokens=max_tokens, json_mode=json_mode,
+                reasoning_effort=reasoning_effort)
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
@@ -232,11 +273,26 @@ def complete_json(prompt: str, system: Optional[str] = None,
 
 def complete_json_retry(prompt: str, system: Optional[str] = None,
                         model: Optional[str] = None, premium_model: Optional[str] = None,
-                        temperature: float = 0.2, max_tokens: int = 2000) -> tuple[Any, Usage]:
+                        temperature: float = 0.2, max_tokens: int = 2000,
+                        debug_capture: Optional[Callable[[str, str, str, int], None]] = None,
+                        reasoning_effort: Optional[str] = None,
+                        ) -> tuple[Any, Usage]:
     """Like complete_json, but an EMPTY / unparseable response is retried once on
     the same model, then ESCALATED to the premium model — because an empty
     completion is a success at the HTTP layer (chat's retries never fire) yet is
-    useless. Accumulates usage across attempts. Raises LLMError if all fail."""
+    useless. Accumulates usage across attempts. Raises LLMError if all fail.
+
+    `debug_capture`, if given, is called as debug_capture(model_name,
+    raw_response_text, finish_reason, reasoning_tokens) immediately after
+    each attempt's HTTP call succeeds -- a pure side-effect for diagnostics
+    (e.g. a caller dumping the exact raw response it received to a file, or
+    warning when a reasoning model returns empty because it exhausted its
+    token budget on hidden reasoning -- finish_reason == "length" with an
+    empty response is the confirmable signature of that specific failure
+    mode, as opposed to a refusal or content filter). Fires for every
+    attempt made, including one that later fails to parse. Never affects
+    retry/escalation behavior or the returned value; the default (None) is
+    a complete no-op."""
     model = model or config.DEFAULT_MODEL
     premium = premium_model or config.PREMIUM_MODEL
     total = Usage()
@@ -244,8 +300,11 @@ def complete_json_retry(prompt: str, system: Optional[str] = None,
     for m in (model, model, premium):     # try, retry, escalate
         try:
             res = complete(prompt, system=system, model=m, temperature=temperature,
-                           max_tokens=max_tokens, json_mode=True)
+                           max_tokens=max_tokens, json_mode=True,
+                           reasoning_effort=reasoning_effort)
             total.add(res.usage)
+            if debug_capture is not None:
+                debug_capture(m, res.text, res.finish_reason, res.usage.reasoning_tokens)
             return parse_json(res.text), total          # parse_json raises on empty
         except (ValueError, LLMError) as e:
             last = e

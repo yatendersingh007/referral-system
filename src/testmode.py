@@ -43,6 +43,8 @@ _FIRM_RESEARCH: dict[str, dict] = {
                              "housing across US secondary markets.",
             "aum_value_usd": 1_100_000_000,
             "aum_display": "$1.1B",
+            "disclosed_figure": "$1.1B",
+            "disclosed_label": "assets under management",
             "aum_asof": "as of Dec 31, 2025",
             "aum_tag": "AUM_CONFIRMED",
             "geography": "US secondary markets, concentrated in Texas and the Southeast",
@@ -70,6 +72,8 @@ _FIRM_RESEARCH: dict[str, dict] = {
                              "private equity, credit, and hedge fund solutions.",
             "aum_value_usd": 1_100_000_000_000,
             "aum_display": "$1.1T",
+            "disclosed_figure": "$1.1T",
+            "disclosed_label": "assets under management",
             "aum_tag": "AUM_CONFIRMED",
             "geography": "Global, headquartered in the United States",
             "capital_stack": "",
@@ -94,6 +98,8 @@ _FIRM_RESEARCH: dict[str, dict] = {
             "firm_oneliner": "A real estate investment firm focused on multifamily acquisitions.",
             "aum_value_usd": None,
             "aum_display": "",
+            "disclosed_figure": "",
+            "disclosed_label": "",
             "aum_tag": "AUM_UNVERIFIED",
             "geography": "United States",
             "capital_stack": "",
@@ -118,6 +124,7 @@ _DEFAULT_PARKED_RESEARCH = {
     "research_cost_usd": 0.001,
     "research": {
         "firm_oneliner": "", "aum_value_usd": None, "aum_display": "",
+        "disclosed_figure": "", "disclosed_label": "",
         "aum_tag": "AUM_UNVERIFIED", "geography": "", "capital_stack": "",
         "founded_year": "", "domain": "", "recent_event": "", "sources": [],
     },
@@ -161,6 +168,7 @@ _PERSONALIZATION: dict[str, dict] = {
         "recent_event": "Director of Capital Markets appointment (2019)",
         "pain_point_angle": "multi-entity LP/GP/co-GP structures across a geographically "
                             "dispersed multifamily portfolio",
+        "pain_point_angle_source": "https://kingbirdinvestments.example/portfolio",
         "service_fit": "property accounting and fund accounting for a multi-entity capital stack",
         "thin_personalization": False,
     },
@@ -174,7 +182,7 @@ def personalization_fixture(firm_name: str) -> dict:
     return {
         "hook_1": "", "hook_1_source": "", "hook_2": "", "hook_2_source": "",
         "firm_niche": "", "recent_event": "", "pain_point_angle": "",
-        "service_fit": "", "thin_personalization": True,
+        "pain_point_angle_source": "", "service_fit": "", "thin_personalization": True,
     }
 
 
@@ -210,20 +218,30 @@ _DECK_CONTENT: dict[str, dict] = {
             "Uses LP, GP, and co-GP structures alongside preferred equity on individual deals.",
             "Appointed a dedicated Director of Capital Markets in 2019.",
         ],
-        "fit_paragraphs": [
-            "With a multifamily portfolio spread across Texas and the Southeast, Kingbird "
-            "needs property-level books that stay current across many entities without "
-            "adding headcount at every close.",
-            "Kingbird's LP, GP, and co-GP structures on each deal call for accurate capital "
-            "allocations and waterfall tracking across the full stack.",
-            "A confirmed base of roughly $1.1B under management means Kingbird's investors "
-            "expect reporting that holds up to institutional scrutiny every quarter.",
-            "Continued acquisitions across secondary markets keep Kingbird's underwriting "
-            "team busy modeling new deals against the existing portfolio.",
-            "Since standing up a dedicated Director of Capital Markets role in 2019, "
-            "Kingbird has leaned further into debt placement and refinancing work that a "
-            "dedicated analyst can support directly.",
-        ],
+        "fit_paragraphs": {
+            "property_accounting": (
+                "With a multifamily portfolio spread across Texas and the Southeast, Kingbird "
+                "needs property-level books that stay current across many entities without "
+                "adding headcount at every close."
+            ),
+            "fund_structures": (
+                "Kingbird's LP, GP, and co-GP structures on each deal call for accurate capital "
+                "allocations and waterfall tracking across the full stack."
+            ),
+            "investor_reporting": (
+                "A confirmed base of roughly $1.1B under management means Kingbird's investors "
+                "expect reporting that holds up to institutional scrutiny every quarter."
+            ),
+            "underwriting_acquisitions": (
+                "Continued acquisitions across secondary markets keep Kingbird's underwriting "
+                "team busy modeling new deals against the existing portfolio."
+            ),
+            "capital_markets": (
+                "Since standing up a dedicated Director of Capital Markets role in 2019, "
+                "Kingbird has leaned further into debt placement and refinancing work that a "
+                "dedicated analyst can support directly."
+            ),
+        },
         "confidence": "high",
         "relevant_roles": ["property accountants", "fund accountants", "capital markets analysts"],
     },
